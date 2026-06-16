@@ -149,14 +149,14 @@ const INDICATOR_RULES = [
 ];
 
 const RECOMMEND_RULES = [
-    { minAge: 50, maxAge: 200, gender: 'both',   items: ['HEAD_CT', 'GASTROSCOPY', 'TUMOR_FULL'], reason: '50岁以上重大疾病高发期' },
-    { minAge: 40, maxAge: 49,  gender: 'both',   items: ['TUMOR_5', 'BMD', 'TCD'],          reason: '中年骨量下降与血管硬化风险' },
-    { minAge: 40, maxAge: 200, gender: 'male',   items: ['PSA', 'LUNG_CT', 'CAROTID_B'],     reason: '男性前列腺及心脑血管专项' },
-    { minAge: 30, maxAge: 39,  gender: 'male',   items: ['THYROID_B', 'CERVICAL_XRAY', 'HELICO'], reason: '职场压力高发期' },
-    { minAge: 40, maxAge: 200, gender: 'female', items: ['MAMMOGRAPHY', 'TCT', 'HPV'],       reason: '中年女性乳腺及宫颈早筛' },
-    { minAge: 30, maxAge: 39,  gender: 'female', items: ['HPV', 'THYROID_B', 'BREAST_B'],    reason: '育龄女性专项关爱' },
-    { minAge: 18, maxAge: 29,  gender: 'female', items: ['GYNECOLOGY', 'BREAST_B', 'HPV'],   reason: '青年女性常规妇科检查' },
-    { minAge: 18, maxAge: 29,  gender: 'male',   items: ['UROLOGY', 'HELICO', 'THYROID_B'],  reason: '青年男性常见问题筛查' },
+    { minAge: 40, maxAge: 200, gender: 'male',   items: ['PSA', 'PROSTATE_B', 'LUNG_CT'],     reason: '40+男性前列腺及肺部专项筛查', priority: 100 },
+    { minAge: 40, maxAge: 200, gender: 'female', items: ['MAMMOGRAPHY', 'BREAST_B', 'TCT', 'HPV', 'GYNECOLOGY'], reason: '40+女性乳腺宫颈专项早筛', priority: 100 },
+    { minAge: 30, maxAge: 39,  gender: 'female', items: ['BREAST_B', 'HPV', 'TCT', 'GYNECOLOGY'], reason: '育龄女性乳腺妇科专项', priority: 90 },
+    { minAge: 18, maxAge: 29,  gender: 'female', items: ['BREAST_B', 'GYNECOLOGY', 'HPV'],   reason: '青年女性乳腺妇科常规', priority: 80 },
+    { minAge: 50, maxAge: 200, gender: 'both',   items: ['HEAD_CT', 'GASTROSCOPY', 'TUMOR_FULL', 'CAROTID_B'], reason: '50+重大疾病高发期深度筛查', priority: 70 },
+    { minAge: 40, maxAge: 49,  gender: 'both',   items: ['TUMOR_5', 'BMD', 'TCD', 'THYROID_B'], reason: '中年骨量下降与血管硬化风险', priority: 60 },
+    { minAge: 30, maxAge: 39,  gender: 'male',   items: ['LUNG_CT', 'THYROID_B', 'HELICO'], reason: '职场男性压力高发期', priority: 50 },
+    { minAge: 18, maxAge: 29,  gender: 'male',   items: ['UROLOGY', 'HELICO', 'THYROID_B'],  reason: '青年男性常见问题筛查', priority: 40 },
 ];
 
 const INDICATOR_KEYS = INDICATOR_RULES.map(r => r.key);
@@ -174,6 +174,82 @@ const rmb = n => '¥' + Math.round(n).toLocaleString('zh-CN');
 function getItem(id) { return EXAM_ITEMS.find(i => i.id === id); }
 function getRule(key) { return INDICATOR_RULES.find(r => r.key === key); }
 function getPackage(id) { return PRESET_PACKAGES.find(p => p.id === id); }
+
+const PDF_PARSER = {
+    INDICATOR_PATTERNS: [
+        { key: 'systolicBP',      patterns: [/收缩压[^0-9]{0,10}(\d{2,3})/i, /高压[^0-9]{0,10}(\d{2,3})/i, /SBP[^0-9]{0,10}(\d{2,3})/i, /血压[^0-9]{0,10}(\d{2,3})\s*[\/\~]\s*(\d{2,3})/i] },
+        { key: 'diastolicBP',     patterns: [/舒张压[^0-9]{0,10}(\d{2,3})/i, /低压[^0-9]{0,10}(\d{2,3})/i, /DBP[^0-9]{0,10}(\d{2,3})/i, /血压[^0-9]{0,10}\d{2,3}\s*[\/\~]\s*(\d{2,3})/i] },
+        { key: 'fastingGlucose',  patterns: [/空腹血糖[^0-9\.]{0,10}(\d{1,2}\.?\d{0,2})/i, /血糖[^0-9\.]{0,10}(\d{1,2}\.?\d{0,2})/i, /GLU[^0-9\.]{0,10}(\d{1,2}\.?\d{0,2})/i] },
+        { key: 'totalCholesterol',patterns: [/总胆固醇[^0-9\.]{0,10}(\d{1,2}\.?\d{0,2})/i, /胆固醇[^0-9\.]{0,10}(\d{1,2}\.?\d{0,2})/i, /TC[^0-9\.]{0,10}(\d{1,2}\.?\d{0,2})/i] },
+        { key: 'triglyceride',    patterns: [/甘油三酯[^0-9\.]{0,10}(\d{1,2}\.?\d{0,2})/i, /甘油三脂[^0-9\.]{0,10}(\d{1,2}\.?\d{0,2})/i, /TG[^0-9\.]{0,10}(\d{1,2}\.?\d{0,2})/i] },
+        { key: 'hdlCholesterol',  patterns: [/高密度脂蛋白[^0-9\.]{0,10}(\d{1,2}\.?\d{0,2})/i, /HDL[^0-9\.]{0,10}(\d{1,2}\.?\d{0,2})/i] },
+        { key: 'ldlCholesterol',  patterns: [/低密度脂蛋白[^0-9\.]{0,10}(\d{1,2}\.?\d{0,2})/i, /LDL[^0-9\.]{0,10}(\d{1,2}\.?\d{0,2})/i] },
+        { key: 'creatinine',      patterns: [/肌酐[^0-9\.]{0,10}(\d{2,3}\.?\d{0,2})/i, /CRE[^0-9\.]{0,10}(\d{2,3}\.?\d{0,2})/i] },
+        { key: 'uricAcid',        patterns: [/尿酸[^0-9\.]{0,10}(\d{2,4}\.?\d{0,2})/i, /UA[^0-9\.]{0,10}(\d{2,4}\.?\d{0,2})/i] },
+        { key: 'alt',             patterns: [/谷丙转氨酶[^0-9\.]{0,10}(\d{1,3}\.?\d{0,2})/i, /ALT[^0-9\.]{0,10}(\d{1,3}\.?\d{0,2})/i, /丙氨酸氨基转移酶[^0-9\.]{0,10}(\d{1,3}\.?\d{0,2})/i] },
+        { key: 'ast',             patterns: [/谷草转氨酶[^0-9\.]{0,10}(\d{1,3}\.?\d{0,2})/i, /AST[^0-9\.]{0,10}(\d{1,3}\.?\d{0,2})/i, /天门冬氨酸氨基转移酶[^0-9\.]{0,10}(\d{1,3}\.?\d{0,2})/i] },
+        { key: 'bmi',             patterns: [/BMI[^0-9\.]{0,10}(\d{1,2}\.?\d{0,2})/i, /体重指数[^0-9\.]{0,10}(\d{1,2}\.?\d{0,2})/i, /身体质量指数[^0-9\.]{0,10}(\d{1,2}\.?\d{0,2})/i] },
+    ],
+
+    extractYear(text) {
+        const m = text.match(/(20\d{2})[^年]{0,3}年?/);
+        if (m) return parseInt(m[1]);
+        const m2 = text.match(/体检日期[^0-9]{0,10}(20\d{2})[\-\/\.](\d{1,2})/);
+        if (m2) return parseInt(m2[1]);
+        const m3 = text.match(/报告日期[^0-9]{0,10}(20\d{2})/);
+        if (m3) return parseInt(m3[1]);
+        return null;
+    },
+
+    extractIndicators(text) {
+        const result = {};
+        this.INDICATOR_PATTERNS.forEach(item => {
+            for (const pat of item.patterns) {
+                const m = text.match(pat);
+                if (m) {
+                    const val = parseFloat(m[m.length - 1]);
+                    if (!isNaN(val) && val > 0) {
+                        result[item.key] = val;
+                        break;
+                    }
+                }
+            }
+        });
+        if (text.match(/血压[^0-9]{0,10}(\d{2,3})\s*[\/\~]\s*(\d{2,3})/)) {
+            const m = text.match(/血压[^0-9]{0,10}(\d{2,3})\s*[\/\~]\s*(\d{2,3})/);
+            if (m) {
+                result.systolicBP = parseFloat(m[1]);
+                result.diastolicBP = parseFloat(m[2]);
+            }
+        }
+        return result;
+    },
+
+    async extractFromPDF(file) {
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            if (!window.pdfjsLib) {
+                console.warn('pdf.js not loaded');
+                return { year: null, indicators: {}, text: '' };
+            }
+            const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer, verbosity: 0 }).promise;
+            let fullText = '';
+            for (let i = 1; i <= Math.min(pdf.numPages, 5); i++) {
+                const page = await pdf.getPage(i);
+                const content = await page.getTextContent();
+                const pageText = content.items.map(item => item.str).join(' ');
+                fullText += ' ' + pageText;
+            }
+            fullText = fullText.replace(/\s+/g, ' ').trim();
+            const year = this.extractYear(fullText);
+            const indicators = this.extractIndicators(fullText);
+            return { year, indicators, text: fullText };
+        } catch (e) {
+            console.error('PDF解析失败:', e);
+            return { year: null, indicators: {}, text: '', error: e.message };
+        }
+    }
+};
 
 const LS = {
     USER_INFO: 'hc_user_info',
@@ -462,20 +538,40 @@ const PackageModule = {
     },
 
     renderRecommend() {
-        const age = State.user.age || 0;
+        const age = State.user.age;
         const gender = State.user.gender;
         const recCard = $('#recommend-card');
+        if (!age || !gender) { recCard.hidden = true; return; }
 
         const pool = [];
-        RECOMMEND_RULES.forEach(rule => {
-            if (age < rule.minAge || age > rule.maxAge) return;
-            if (rule.gender !== 'both' && rule.gender !== gender) return;
+        const matchedRules = RECOMMEND_RULES
+            .filter(rule => {
+                if (age < rule.minAge || age > rule.maxAge) return false;
+                if (rule.gender !== 'both' && rule.gender !== gender) return false;
+                return true;
+            })
+            .sort((a, b) => (b.priority || 0) - (a.priority || 0));
+
+        matchedRules.forEach(rule => {
             rule.items.forEach(id => {
                 if (!State.selectedItemIds.includes(id) && !pool.find(p => p.id === id)) {
                     pool.push({ id, reason: rule.reason });
                 }
             });
         });
+
+        if (gender === 'male' && age >= 40) {
+            if (!pool.find(p => p.id === 'PSA') && !State.selectedItemIds.includes('PSA')) {
+                pool.unshift({ id: 'PSA', reason: '40+男性前列腺肿瘤特异性抗原筛查' });
+            }
+        }
+        if (gender === 'female' && age >= 40) {
+            ['MAMMOGRAPHY', 'TCT', 'HPV'].forEach(id => {
+                if (!pool.find(p => p.id === id) && !State.selectedItemIds.includes(id)) {
+                    pool.unshift({ id, reason: '40+女性乳腺宫颈专项早筛' });
+                }
+            });
+        }
 
         const top3 = pool.slice(0, 3);
         if (!top3.length) { recCard.hidden = true; return; }
@@ -588,24 +684,61 @@ const ReportModule = {
         return o;
     },
 
-    handlePDFUpload(e) {
+    async handlePDFUpload(e) {
         const files = Array.from(e.target.files || []);
         if (!files.length) return;
-        showToast(`已选择 ${files.length} 个PDF，将生成对应年份报告(请手动填写指标)`, 'info');
+        e.target.value = '';
+
+        showToast(`正在解析 ${files.length} 个PDF...`, 'info');
+
         const curYear = new Date().getFullYear();
-        files.forEach((_, i) => {
-            const y = curYear - State.reports.length - i;
-            if (!State.reports.find(r => r.year === y)) {
-                State.reports.push({ year: y, indicators: this.emptyIndicators() });
+        let addedCount = 0;
+        let extractedTotal = 0;
+
+        for (const file of files) {
+            const result = await PDF_PARSER.extractFromPDF(file);
+            let year = result.year;
+            const extracted = result.indicators;
+            const extractedCount = Object.keys(extracted).filter(k => extracted[k] != null).length;
+            extractedTotal += extractedCount;
+
+            if (!year) {
+                const nameMatch = file.name.match(/(20\d{2})/);
+                year = nameMatch ? parseInt(nameMatch[1]) : null;
             }
-        });
+            if (!year) {
+                year = curYear;
+                while (State.reports.find(r => r.year === year)) year--;
+            }
+            if (year < 1990) continue;
+
+            const existing = State.reports.find(r => r.year === year);
+            if (existing) {
+                Object.assign(existing.indicators, extracted);
+            } else {
+                const indicators = this.emptyIndicators();
+                Object.assign(indicators, extracted);
+                State.reports.push({ year, indicators });
+                addedCount++;
+            }
+        }
+
         State.reports.sort((a, b) => a.year - b.year);
         if (State.reports.length) State.activeReportYear = State.reports[State.reports.length - 1].year;
         State.saveReports();
         this.renderReportTabs();
         this.renderIndicatorForm();
         this.updateAll();
-        e.target.value = '';
+
+        if (addedCount > 0 || extractedTotal > 0) {
+            const msg = [];
+            if (addedCount > 0) msg.push(`新增${addedCount}份报告`);
+            if (extractedTotal > 0) msg.push(`自动识别${extractedTotal}项指标`);
+            if (extractedTotal < 12 * files.length) msg.push('其余请手动补填');
+            showToast(msg.join('，'), 'success', 3600);
+        } else {
+            showToast('已添加报告，请手动填写指标数据', 'info');
+        }
     },
 
     renderReportTabs() {
@@ -1080,7 +1213,8 @@ const ExportModule = {
     exportIndicatorsCSV() {
         if (!State.reports.length) { showToast('没有报告数据', 'error'); return; }
         const reports = State.reports.slice().sort((a, b) => a.year - b.year);
-        let csv = '\uFEFF年份,' + INDICATOR_RULES.map(r => `${r.name}(${r.unit})`).join(',') + '\n';
+        const headers = ['年份'].concat(INDICATOR_RULES.map(r => `${r.name}(${r.unit})`));
+        let csv = '\uFEFF' + headers.join(',') + '\n';
         reports.forEach(rep => {
             const row = [rep.year].concat(INDICATOR_KEYS.map(k => {
                 const v = rep.indicators[k];
@@ -1088,19 +1222,23 @@ const ExportModule = {
             }));
             csv += row.join(',') + '\n';
         });
-        csv += '\n正常范围,,' + INDICATOR_RULES.map(r => `${r.minNormal}~${r.maxNormal}`).join(',') + '\n';
+        const refRow = ['参考范围'].concat(INDICATOR_RULES.map(r => `${r.minNormal}~${r.maxNormal} ${r.unit}`));
+        csv += refRow.join(',') + '\n';
         this.downloadBlob(csv, 'text/csv;charset=utf-8', `历年体检指标_${new Date().toISOString().slice(0, 10)}.csv`);
         showToast('指标CSV已导出', 'success');
     },
 
     async exportPackagePDF() {
         if (!State.selectedItemIds.length) { showToast('请先选择项目', 'error'); return; }
+        showToast('正在生成PDF，中文内容将以高清图片形式呈现...', 'info', 4000);
+
         try {
-            showToast('正在生成PDF...', 'info');
-            const node = $('.summary-card').closest('.card') || $('.summary-card');
-            const canvas = await html2canvas($('.package-layout'), {
+            const targetNode = $('.package-layout');
+            const canvas = await html2canvas(targetNode, {
                 scale: 2, useCORS: true, backgroundColor: '#F8FAF9',
-                logging: false
+                logging: false,
+                windowWidth: targetNode.scrollWidth,
+                windowHeight: targetNode.scrollHeight
             });
 
             const { jsPDF } = window.jspdf;
@@ -1108,24 +1246,26 @@ const ExportModule = {
             const pageW = pdf.internal.pageSize.getWidth();
             const pageH = pdf.internal.pageSize.getHeight();
 
-            pdf.setFillColor(248, 250, 249); pdf.rect(0, 0, pageW, pageH, 'F');
-            pdf.setFont('helvetica', 'bold');
-            pdf.setTextColor(16, 185, 129); pdf.setFontSize(22);
-            pdf.text('Health Check Package Quotation', 14, 18);
-            pdf.setTextColor(71, 85, 105); pdf.setFontSize(10);
-            pdf.setFont('helvetica', 'normal');
-            pdf.text(`Customer: Age ${State.user.age} ${State.user.gender === 'male' ? 'Male' : 'Female'}`, 14, 28);
-            pdf.text(`Date: ${new Date().toLocaleDateString('zh-CN')}`, pageW - 60, 28);
+            pdf.setFillColor(248, 250, 249);
+            pdf.rect(0, 0, pageW, pageH, 'F');
 
-            const imgW = pageW - 28;
+            const imgW = pageW - 20;
             const imgH = canvas.height * imgW / canvas.width;
-            const maxH = pageH - 55;
-            let y = 36;
+            const maxH = pageH - 30;
+            let y = 15;
             let remainingH = imgH;
             let offsetY = 0;
+            let pageNum = 1;
 
             while (remainingH > 0) {
-                const sliceH = Math.min(remainingH, canvas.height * maxH / imgH);
+                if (pageNum > 1) {
+                    pdf.addPage();
+                    pdf.setFillColor(248, 250, 249);
+                    pdf.rect(0, 0, pageW, pageH, 'F');
+                    y = 15;
+                }
+
+                const sliceH = Math.min(remainingH, maxH);
                 const srcCanvas = document.createElement('canvas');
                 srcCanvas.width = canvas.width;
                 srcCanvas.height = Math.round(sliceH * canvas.width / imgW);
@@ -1134,24 +1274,24 @@ const ExportModule = {
                 sctx.fillRect(0, 0, srcCanvas.width, srcCanvas.height);
                 sctx.drawImage(canvas, 0, -offsetY, canvas.width, canvas.height);
 
-                const srcData = srcCanvas.toDataURL('image/jpeg', 0.92);
-                const drawH = sliceH * imgW / canvas.width;
-                pdf.addImage(srcData, 'JPEG', 14, y, imgW, drawH);
+                const srcData = srcCanvas.toDataURL('image/jpeg', 0.95);
+                const drawH = sliceH;
+                pdf.addImage(srcData, 'JPEG', 10, y, imgW, drawH);
 
                 offsetY += srcCanvas.height;
-                remainingH -= (canvas.height - offsetY <= 0 ? remainingH : sliceH);
-                if (canvas.height - offsetY <= 1) break;
-
-                y += drawH + 10;
-                if (y + 50 > pageH) { pdf.addPage(); y = 18; pdf.setFillColor(248, 250, 249); pdf.rect(0, 0, pageW, pageH, 'F'); }
+                if (offsetY >= canvas.height - 1) break;
+                remainingH -= sliceH;
+                pageNum++;
             }
 
             pdf.save(`体检套餐报价单_${new Date().toISOString().slice(0, 10)}.pdf`);
-            showToast('报价单PDF已导出', 'success');
+            showToast('报价单PDF已导出，中文完美显示', 'success');
+            return;
         } catch (e) {
-            console.error(e);
-            this.exportPackagePDFSimple();
+            console.warn('截图模式失败，降级到文字模式:', e);
         }
+
+        this.exportPackagePDFSimple();
     },
 
     exportPackagePDFSimple() {
@@ -1211,132 +1351,230 @@ const ExportModule = {
 
     async exportReportPDF() {
         if (!State.reports.length) { showToast('没有报告数据', 'error'); return; }
+        showToast('正在生成对比PDF，中文内容将以高清图片形式呈现...', 'info', 4000);
+
         try {
-            showToast('正在生成对比PDF...', 'info');
+            const targetNode = $('#report-panel');
+            const origOverflow = targetNode.style.overflow;
+            const origHeight = targetNode.style.height;
+            targetNode.style.overflow = 'visible';
+            targetNode.style.height = 'auto';
+
+            await new Promise(resolve => setTimeout(resolve, 100));
+
+            const canvas = await html2canvas(targetNode, {
+                scale: 2, useCORS: true, backgroundColor: '#F8FAF9',
+                logging: false,
+                windowWidth: targetNode.scrollWidth,
+                windowHeight: targetNode.scrollHeight
+            });
+
+            targetNode.style.overflow = origOverflow;
+            targetNode.style.height = origHeight;
+
             const { jsPDF } = window.jspdf;
             const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
             const pageW = pdf.internal.pageSize.getWidth();
             const pageH = pdf.internal.pageSize.getHeight();
-            let y = 20;
 
-            pdf.setFillColor(248, 250, 249); pdf.rect(0, 0, pageW, pageH, 'F');
-            pdf.setTextColor(16, 185, 129); pdf.setFontSize(20); pdf.setFont('helvetica', 'bold');
-            pdf.text('体检报告对比分析', 105, y, { align: 'center' });
-            y += 10;
-            pdf.setFontSize(10); pdf.setTextColor(100); pdf.setFont('helvetica', 'normal');
+            pdf.setFillColor(248, 250, 249);
+            pdf.rect(0, 0, pageW, pageH, 'F');
+
+            const imgW = pageW - 20;
+            const imgH = canvas.height * imgW / canvas.width;
+            const maxH = pageH - 30;
+            let y = 15;
+            let remainingH = imgH;
+            let offsetY = 0;
+            let pageNum = 1;
+
+            while (remainingH > 0) {
+                if (pageNum > 1) {
+                    pdf.addPage();
+                    pdf.setFillColor(248, 250, 249);
+                    pdf.rect(0, 0, pageW, pageH, 'F');
+                    y = 15;
+                }
+
+                const sliceH = Math.min(remainingH, maxH);
+                const srcCanvas = document.createElement('canvas');
+                srcCanvas.width = canvas.width;
+                srcCanvas.height = Math.round(sliceH * canvas.width / imgW);
+                const sctx = srcCanvas.getContext('2d');
+                sctx.fillStyle = '#F8FAF9';
+                sctx.fillRect(0, 0, srcCanvas.width, srcCanvas.height);
+                sctx.drawImage(canvas, 0, -offsetY, canvas.width, canvas.height);
+
+                const srcData = srcCanvas.toDataURL('image/jpeg', 0.95);
+                const drawH = sliceH;
+                pdf.addImage(srcData, 'JPEG', 10, y, imgW, drawH);
+
+                offsetY += srcCanvas.height;
+                if (offsetY >= canvas.height - 1) break;
+                remainingH -= sliceH;
+                pageNum++;
+            }
+
             const years = State.reports.slice().sort((a, b) => a.year - b.year).map(r => r.year);
-            pdf.text(`康源体检中心  |  对比年份: ${years.join('-')}  |  ${new Date().toLocaleDateString('zh-CN')}`, 105, y, { align: 'center' });
-            y += 12;
-
-            const latest = [...State.reports].sort((a, b) => b.year - a.year)[0];
-            const abnormals = INDICATOR_RULES.filter(r => {
-                const v = latest.indicators[r.key];
-                return ReportModule.getIndicatorStatus(v, r).cls === 'abnormal';
-            });
-
-            pdf.setFillColor(254, 242, 242); pdf.roundedRect(14, y, pageW - 28, 8, 2, 2, 'F');
-            pdf.setFillColor(239, 68, 68); pdf.roundedRect(14, y, 4, 8, 2, 2, 'F');
-            pdf.setFontSize(11); pdf.setTextColor(153, 27, 27); pdf.setFont('helvetica', 'bold');
-            pdf.text(`⚠️  异常指标预警 (${latest.year}年) - 共${abnormals.length}项`, 22, y + 5.5);
-            y += 14;
-            pdf.setFontSize(10);
-            if (abnormals.length === 0) {
-                pdf.setTextColor(16, 185, 129); pdf.setFont('helvetica', 'bold');
-                pdf.text('✅ 暂无异常指标，健康状况良好！', 14, y);
-                y += 10;
-            } else {
-                abnormals.slice(0, 6).forEach(r => {
-                    const v = latest.indicators[r.key];
-                    const isHigh = v > r.maxNormal;
-                    const dirTxt = isHigh ? '偏高' : '偏低';
-                    if (y > pageH - 40) { pdf.addPage(); y = 20; pdf.setFillColor(248, 250, 249); pdf.rect(0, 0, pageW, pageH, 'F'); }
-                    pdf.setFillColor(254, 226, 226); pdf.roundedRect(14, y - 4, pageW - 28, 9, 2, 2, 'F');
-                    pdf.setTextColor(239, 68, 68); pdf.setFont('helvetica', 'bold');
-                    pdf.text(`● ${r.name} ${dirTxt}: ${v}${r.unit}  (正常 ${r.minNormal}~${r.maxNormal})`, 18, y + 2);
-                    y += 13;
-                    pdf.setTextColor(71, 85, 105); pdf.setFont('helvetica', 'normal');
-                    const advice = (isHigh ? r.highAdvice : r.lowAdvice).substring(0, 110) + '...';
-                    pdf.text(`  建议: ${advice}`, 18, y + 2);
-                    y += 10;
-                });
-            }
-
-            if (State.reports.length >= 3) {
-                y += 6;
-                if (y > pageH - 60) { pdf.addPage(); y = 20; pdf.setFillColor(248, 250, 249); pdf.rect(0, 0, pageW, pageH, 'F'); }
-                pdf.setFillColor(219, 234, 254); pdf.roundedRect(14, y, pageW - 28, 8, 2, 2, 'F');
-                pdf.setFillColor(59, 130, 246); pdf.roundedRect(14, y, 4, 8, 2, 2, 'F');
-                pdf.setTextColor(30, 58, 138); pdf.setFontSize(11); pdf.setFont('helvetica', 'bold');
-                pdf.text(`📊  多年趋势分析`, 22, y + 5.5);
-                y += 14;
-                pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10);
-                INDICATOR_RULES.forEach(r => {
-                    if (y > pageH - 20) { pdf.addPage(); y = 20; pdf.setFillColor(248, 250, 249); pdf.rect(0, 0, pageW, pageH, 'F'); }
-                    const trend = ReportModule.analyzeTrend(r.key);
-                    if (!trend) return;
-                    const sorted = State.reports.slice().sort((a, b) => a.year - b.year);
-                    const vals = sorted.map(rep => rep.indicators[r.key]).filter(v => v != null && !isNaN(v));
-                    if (vals.length < 3) return;
-                    const map = { up: '📈 逐年升高', down: '📉 逐年降低', stable: '➡️ 基本稳定' };
-                    const colorMap = { up: [239, 68, 68], down: [59, 130, 246], stable: [16, 185, 129] };
-                    pdf.setTextColor(...colorMap[trend]); pdf.setFont('helvetica', 'bold');
-                    pdf.text(`${map[trend]}  ${r.name}`, 18, y);
-                    pdf.setTextColor(100); pdf.setFont('helvetica', 'normal');
-                    const chg = vals[vals.length - 1] - vals[0];
-                    const pct = vals[0] ? (chg / vals[0] * 100).toFixed(1) : 0;
-                    pdf.text(`   ${sorted[0].year}年 ${vals[0]}${r.unit}  →  ${sorted[sorted.length - 1].year}年 ${vals[vals.length - 1]}${r.unit}  (${chg > 0 ? '+' : ''}${pct}%)`, 90, y);
-                    y += 8;
-                });
-            }
-
-            y += 6;
-            if (y > pageH - 50) { pdf.addPage(); y = 20; pdf.setFillColor(248, 250, 249); pdf.rect(0, 0, pageW, pageH, 'F'); }
-            pdf.setFillColor(254, 243, 199); pdf.roundedRect(14, y, pageW - 28, 8, 2, 2, 'F');
-            pdf.setFillColor(245, 158, 11); pdf.roundedRect(14, y, 4, 8, 2, 2, 'F');
-            pdf.setTextColor(146, 64, 14); pdf.setFontSize(11); pdf.setFont('helvetica', 'bold');
-            pdf.text(`💡  历年指标数据汇总`, 22, y + 5.5);
-            y += 14;
-
-            pdf.setFillColor(241, 245, 249); pdf.roundedRect(14, y - 4, pageW - 28, 8, 2, 2, 'F');
-            pdf.setFontSize(10); pdf.setTextColor(15); pdf.setFont('helvetica', 'bold');
-            pdf.text('指标名称', 18, y + 1.5);
-            years.forEach((yr, i) => {
-                const xPos = 75 + i * ((pageW - 90) / Math.max(years.length, 1));
-                pdf.text(`${yr}年`, xPos, y + 1.5);
-            });
-            y += 12;
-
-            pdf.setFont('helvetica', 'normal');
-            INDICATOR_RULES.forEach((r, idx) => {
-                if (y > pageH - 20) { pdf.addPage(); y = 20; pdf.setFillColor(248, 250, 249); pdf.rect(0, 0, pageW, pageH, 'F'); }
-                if (idx % 2 === 1) { pdf.setFillColor(250, 250, 250); pdf.roundedRect(14, y - 5, pageW - 28, 8, 1, 1, 'F'); }
-                const latestV = latest.indicators[r.key];
-                const st = ReportModule.getIndicatorStatus(latestV, r);
-                pdf.setTextColor(st.cls === 'abnormal' ? 239 : 71, st.cls === 'abnormal' ? 68 : 85, st.cls === 'abnormal' ? 68 : 105);
-                pdf.setFont(st.cls === 'abnormal' ? 'helvetica' : 'helvetica', st.cls === 'abnormal' ? 'bold' : 'normal');
-                pdf.text(r.name.substring(0, 16), 18, y);
-                pdf.setFont('helvetica', 'normal');
-                years.forEach((yr, i) => {
-                    const rep = State.reports.find(x => x.year === yr);
-                    const v = rep?.indicators[r.key];
-                    const xPos = 75 + i * ((pageW - 90) / Math.max(years.length, 1));
-                    const txt = (v == null || isNaN(v)) ? '—' : String(v);
-                    pdf.setTextColor((v == null || isNaN(v)) ? 180 : 15);
-                    pdf.text(txt, xPos, y);
-                });
-                y += 8;
-            });
-
-            y += 6;
-            pdf.setFontSize(9); pdf.setTextColor(148, 163, 184);
-            pdf.text(`© 康源体检中心 · 本报告仅供参考，具体诊疗请遵医嘱 · 生成时间: ${new Date().toLocaleString('zh-CN')}`, 14, pageH - 12);
-
             pdf.save(`体检报告对比_${years.join('-')}.pdf`);
-            showToast('对比PDF已导出', 'success');
+            showToast('对比PDF已导出，中文完美显示', 'success');
+            return;
         } catch (e) {
-            console.error(e);
-            showToast('PDF生成失败，请重试', 'error');
+            console.warn('截图模式失败，降级到文字模式:', e);
         }
+
+        this.exportReportPDFSimple();
+    },
+
+    exportReportPDFSimple() {
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
+        const pageW = pdf.internal.pageSize.getWidth();
+        const pageH = pdf.internal.pageSize.getHeight();
+        let y = 20;
+
+        const years = State.reports.slice().sort((a, b) => a.year - b.year).map(r => r.year);
+        const latest = [...State.reports].sort((a, b) => b.year - a.year)[0];
+
+        const addTextLine = (text, x, yPos, options = {}) => {
+            const maxLen = options.maxLen || 60;
+            const lines = [];
+            let remaining = text;
+            while (remaining.length > 0) {
+                lines.push(remaining.substring(0, maxLen));
+                remaining = remaining.substring(maxLen);
+            }
+            lines.forEach((line, i) => {
+                pdf.text(line, x, yPos + i * (options.lineHeight || 5), options);
+            });
+            return lines.length * (options.lineHeight || 5);
+        };
+
+        pdf.setFillColor(248, 250, 249); pdf.rect(0, 0, pageW, pageH, 'F');
+        pdf.setTextColor(16, 185, 129); pdf.setFontSize(18); pdf.setFont('helvetica', 'bold');
+        pdf.text('Health Report Comparison', 105, y, { align: 'center' });
+        y += 8;
+        pdf.setTextColor(16, 185, 129); pdf.setFontSize(14);
+        pdf.text('Ti Jian Bao Gao Dui Bi', 105, y, { align: 'center' });
+        y += 10;
+        pdf.setFontSize(10); pdf.setTextColor(100); pdf.setFont('helvetica', 'normal');
+        pdf.text(`Kangyuan Health Center | Years: ${years.join('-')} | ${new Date().toLocaleDateString('zh-CN')}`, 105, y, { align: 'center' });
+        y += 12;
+
+        const abnormals = INDICATOR_RULES.filter(r => {
+            const v = latest.indicators[r.key];
+            return ReportModule.getIndicatorStatus(v, r).cls === 'abnormal';
+        });
+
+        pdf.setFillColor(254, 242, 242); pdf.roundedRect(14, y, pageW - 28, 8, 2, 2, 'F');
+        pdf.setFillColor(239, 68, 68); pdf.roundedRect(14, y, 4, 8, 2, 2, 'F');
+        pdf.setFontSize(11); pdf.setTextColor(153, 27, 27); pdf.setFont('helvetica', 'bold');
+        pdf.text(`Abnormal Indicators (${latest.year}) - ${abnormals.length} items`, 22, y + 5.5);
+        y += 14;
+        pdf.setFontSize(10);
+
+        if (abnormals.length === 0) {
+            pdf.setTextColor(16, 185, 129); pdf.setFont('helvetica', 'bold');
+            pdf.text('All indicators are normal, good health!', 14, y);
+            y += 10;
+        } else {
+            abnormals.forEach(r => {
+                const v = latest.indicators[r.key];
+                if (v == null || isNaN(v)) return;
+                const isHigh = v > r.maxNormal;
+                const dirTxt = isHigh ? 'HIGH' : 'LOW';
+                if (y > pageH - 40) { pdf.addPage(); y = 20; pdf.setFillColor(248, 250, 249); pdf.rect(0, 0, pageW, pageH, 'F'); }
+                pdf.setFillColor(254, 226, 226); pdf.roundedRect(14, y - 4, pageW - 28, 9, 2, 2, 'F');
+                pdf.setTextColor(239, 68, 68); pdf.setFont('helvetica', 'bold');
+                pdf.text(`* ${r.key} ${dirTxt}: ${v}${r.unit} (Normal: ${r.minNormal}~${r.maxNormal})`, 18, y + 2);
+                y += 8;
+                pdf.setTextColor(71, 85, 105); pdf.setFont('helvetica', 'normal');
+                const advice = isHigh ? 'Please review with doctor, control diet and exercise' : 'Please review with doctor, ensure adequate nutrition';
+                pdf.text(`  Advice: ${advice}`, 18, y + 2);
+                y += 8;
+                pdf.setTextColor(120, 120, 120); pdf.setFontSize(9);
+                addTextLine(`  建议: ${isHigh ? r.highAdvice : r.lowAdvice}`, 18, y + 2, { maxLen: 80, lineHeight: 4 });
+                pdf.setFontSize(10);
+                y += 12;
+            });
+        }
+
+        if (State.reports.length >= 3) {
+            y += 6;
+            if (y > pageH - 60) { pdf.addPage(); y = 20; pdf.setFillColor(248, 250, 249); pdf.rect(0, 0, pageW, pageH, 'F'); }
+            pdf.setFillColor(219, 234, 254); pdf.roundedRect(14, y, pageW - 28, 8, 2, 2, 'F');
+            pdf.setFillColor(59, 130, 246); pdf.roundedRect(14, y, 4, 8, 2, 2, 'F');
+            pdf.setTextColor(30, 58, 138); pdf.setFontSize(11); pdf.setFont('helvetica', 'bold');
+            pdf.text(`Trend Analysis (${years.length} years)`, 22, y + 5.5);
+            y += 14;
+            pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10);
+
+            INDICATOR_RULES.forEach(r => {
+                if (y > pageH - 20) { pdf.addPage(); y = 20; pdf.setFillColor(248, 250, 249); pdf.rect(0, 0, pageW, pageH, 'F'); }
+                const trend = ReportModule.analyzeTrend(r.key);
+                const sorted = State.reports.slice().sort((a, b) => a.year - b.year);
+                const vals = sorted.map(rep => rep.indicators[r.key]).filter(v => v != null && !isNaN(v));
+                if (vals.length < 2) return;
+                const map = { up: 'UP', down: 'DOWN', stable: 'STABLE' };
+                const colorMap = { up: [239, 68, 68], down: [59, 130, 246], stable: [16, 185, 129] };
+                const chg = vals[vals.length - 1] - vals[0];
+                const pct = vals[0] ? (chg / vals[0] * 100).toFixed(1) : 0;
+                pdf.setTextColor(...colorMap[trend || 'stable']); pdf.setFont('helvetica', 'bold');
+                pdf.text(`${map[trend || 'stable']}  ${r.key} (${r.name.substring(0, 8)})`, 18, y);
+                pdf.setTextColor(100); pdf.setFont('helvetica', 'normal');
+                pdf.text(`${sorted[0].year}: ${vals[0]}${r.unit} -> ${sorted[sorted.length - 1].year}: ${vals[vals.length - 1]}${r.unit} (${chg > 0 ? '+' : ''}${pct}%)`, 80, y);
+                y += 7;
+            });
+        }
+
+        y += 6;
+        if (y > pageH - 50) { pdf.addPage(); y = 20; pdf.setFillColor(248, 250, 249); pdf.rect(0, 0, pageW, pageH, 'F'); }
+        pdf.setFillColor(254, 243, 199); pdf.roundedRect(14, y, pageW - 28, 8, 2, 2, 'F');
+        pdf.setFillColor(245, 158, 11); pdf.roundedRect(14, y, 4, 8, 2, 2, 'F');
+        pdf.setTextColor(146, 64, 14); pdf.setFontSize(11); pdf.setFont('helvetica', 'bold');
+        pdf.text(`Indicator Data Summary`, 22, y + 5.5);
+        y += 14;
+
+        pdf.setFillColor(241, 245, 249); pdf.roundedRect(14, y - 4, pageW - 28, 8, 2, 2, 'F');
+        pdf.setFontSize(10); pdf.setTextColor(15); pdf.setFont('helvetica', 'bold');
+        pdf.text('Indicator', 18, y + 1.5);
+        years.forEach((yr, i) => {
+            const xPos = 65 + i * ((pageW - 80) / Math.max(years.length, 1));
+            pdf.text(`${yr}`, xPos, y + 1.5);
+        });
+        pdf.text('Normal', pageW - 25, y + 1.5, { align: 'right' });
+        y += 12;
+
+        pdf.setFont('helvetica', 'normal');
+        INDICATOR_RULES.forEach((r, idx) => {
+            if (y > pageH - 20) { pdf.addPage(); y = 20; pdf.setFillColor(248, 250, 249); pdf.rect(0, 0, pageW, pageH, 'F'); }
+            if (idx % 2 === 1) { pdf.setFillColor(250, 250, 250); pdf.roundedRect(14, y - 5, pageW - 28, 8, 1, 1, 'F'); }
+            const latestV = latest.indicators[r.key];
+            const st = ReportModule.getIndicatorStatus(latestV, r);
+            pdf.setTextColor(st.cls === 'abnormal' ? 239 : 71, st.cls === 'abnormal' ? 68 : 85, st.cls === 'abnormal' ? 68 : 105);
+            pdf.setFont(st.cls === 'abnormal' ? 'helvetica' : 'helvetica', st.cls === 'abnormal' ? 'bold' : 'normal');
+            pdf.text(r.key, 18, y);
+            pdf.setFont('helvetica', 'normal');
+            years.forEach((yr, i) => {
+                const rep = State.reports.find(x => x.year === yr);
+                const v = rep?.indicators[r.key];
+                const xPos = 65 + i * ((pageW - 80) / Math.max(years.length, 1));
+                const txt = (v == null || isNaN(v)) ? '-' : String(v);
+                pdf.setTextColor((v == null || isNaN(v)) ? 180 : 15);
+                pdf.text(txt, xPos, y);
+            });
+            pdf.setTextColor(150, 150, 150);
+            pdf.text(`${r.minNormal}-${r.maxNormal}`, pageW - 25, y, { align: 'right' });
+            y += 7;
+        });
+
+        y += 6;
+        pdf.setFontSize(9); pdf.setTextColor(148, 163, 184);
+        pdf.text(`* This report is for reference only. Please consult a doctor for diagnosis.`, 14, pageH - 16);
+        pdf.text(`Generated: ${new Date().toLocaleString('zh-CN')} | Kangyuan Health Center`, 14, pageH - 10);
+
+        pdf.save(`体检报告对比_${years.join('-')}.pdf`);
+        showToast('对比PDF已导出(文字模式)', 'success');
     },
 
     downloadBlob(content, mime, filename) {
@@ -1364,6 +1602,9 @@ $$('.tab-btn').forEach(btn => {
 });
 
 function init() {
+    if (window.pdfjsLib) {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+    }
     State.load();
     PackageModule.init();
     ReportModule.init();
