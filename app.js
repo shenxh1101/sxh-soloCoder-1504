@@ -1291,6 +1291,7 @@ const PDFCanvas = {
     MARGIN_T: 50,
     MARGIN_B: 792,
     LINE_H: 16,
+    _textLayers: null,
 
     createPage(bgColor = '#F8FAF9') {
         const canvas = document.createElement('canvas');
@@ -1306,6 +1307,7 @@ const PDFCanvas = {
     _newPage(state, bgColor = '#F8FAF9') {
         const pages = state.pages;
         pages.push(state.canvas);
+        this._textLayers.push([]);
         const canvas = document.createElement('canvas');
         canvas.width = this.PAGE_W * 2;
         canvas.height = this.PAGE_H * 2;
@@ -1320,14 +1322,30 @@ const PDFCanvas = {
         this._drawFooter(state);
     },
 
+    _addText(pageIdx, text, x, y, size = 11, align = 'left') {
+        if (!this._textLayers[pageIdx]) this._textLayers[pageIdx] = [];
+        const lines = String(text).split(/\r?\n/);
+        lines.forEach((line, i) => {
+            this._textLayers[pageIdx].push({
+                text: line,
+                x, y: y + i * size * 1.3,
+                size, align
+            });
+        });
+    },
+
     _drawFooter(state) {
         const { ctx } = state;
         ctx.fillStyle = '#94A3B8';
         ctx.font = '9px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif';
         ctx.textAlign = 'left';
-        ctx.fillText(`© 康源体检中心 · 本报告仅供参考，具体诊疗请遵医嘱`, this.MARGIN_L, this.MARGIN_B + 10);
+        const leftText = '© 康源体检中心 · 本报告仅供参考，具体诊疗请遵医嘱';
+        ctx.fillText(leftText, this.MARGIN_L, this.MARGIN_B + 10);
+        this._addText(state.pageNum - 1, leftText, this.MARGIN_L, this.MARGIN_B + 10, 9, 'left');
         ctx.textAlign = 'right';
-        ctx.fillText(`第 ${state.pageNum} 页`, this.MARGIN_R, this.MARGIN_B + 10);
+        const rightText = `第 ${state.pageNum} 页`;
+        ctx.fillText(rightText, this.MARGIN_R, this.MARGIN_B + 10);
+        this._addText(state.pageNum - 1, rightText, this.MARGIN_R, this.MARGIN_B + 10, 9, 'right');
         ctx.textAlign = 'left';
     },
 
@@ -1342,6 +1360,7 @@ const PDFCanvas = {
         ctx.font = `bold ${size}px "Noto Serif SC", "Songti SC", "SimSun", serif`;
         ctx.textAlign = 'center';
         ctx.fillText(text, this.PAGE_W / 2, state.y);
+        this._addText(state.pageNum - 1, text, this.PAGE_W / 2, state.y, size, 'center');
         ctx.textAlign = 'left';
         state.y += size + 10;
     },
@@ -1353,6 +1372,7 @@ const PDFCanvas = {
         ctx.font = `${size}px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif`;
         ctx.textAlign = 'center';
         ctx.fillText(text, this.PAGE_W / 2, state.y);
+        this._addText(state.pageNum - 1, text, this.PAGE_W / 2, state.y, size, 'center');
         ctx.textAlign = 'left';
         state.y += size + 14;
     },
@@ -1369,6 +1389,7 @@ const PDFCanvas = {
         ctx.fillStyle = textColor;
         ctx.font = `bold 12px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif`;
         ctx.fillText(text, x + 14, state.y + 17);
+        this._addText(state.pageNum - 1, text, x + 14, state.y + 17, 12, 'left');
         state.y += 38;
     },
 
@@ -1382,6 +1403,7 @@ const PDFCanvas = {
         lines.forEach(line => {
             this._checkPage(state, this.LINE_H);
             ctx.fillText(line, this.MARGIN_L + indent, state.y);
+            this._addText(state.pageNum - 1, line, this.MARGIN_L + indent, state.y, size, 'left');
             state.y += this.LINE_H;
         });
     },
@@ -1392,6 +1414,7 @@ const PDFCanvas = {
         ctx.fillStyle = labelColor;
         ctx.font = `11px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif`;
         ctx.fillText(label, this.MARGIN_L, state.y);
+        this._addText(state.pageNum - 1, label, this.MARGIN_L, state.y, 11, 'left');
         ctx.fillStyle = highlight ? '#DC2626' : valueColor;
         ctx.font = `${highlight ? 'bold ' : ''}11px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif`;
         ctx.textAlign = 'right';
@@ -1399,6 +1422,7 @@ const PDFCanvas = {
         valLines.forEach((line, i) => {
             if (i > 0) { state.y += this.LINE_H; this._checkPage(state, this.LINE_H); }
             ctx.fillText(line, this.MARGIN_R, state.y);
+            this._addText(state.pageNum - 1, line, this.MARGIN_R, state.y, 11, 'right');
         });
         ctx.textAlign = 'left';
         state.y += this.LINE_H;
@@ -1407,6 +1431,7 @@ const PDFCanvas = {
     writeTable(state, headers, rows, options = {}) {
         const colWidths = options.colWidths || headers.map(() => Math.floor((this.MARGIN_R - this.MARGIN_L) / headers.length));
         const rowH = options.rowH || 24;
+        const highlightMap = options.highlightMap || {};
         this._checkPage(state, rowH + 10);
 
         const { ctx } = state;
@@ -1420,6 +1445,7 @@ const PDFCanvas = {
         let cx = startX + 8;
         headers.forEach((h, i) => {
             ctx.fillText(h, cx, cursorY + 15);
+            this._addText(state.pageNum - 1, h, cx, cursorY + 15, 10, 'left');
             cx += colWidths[i];
         });
         cursorY += rowH;
@@ -1436,11 +1462,19 @@ const PDFCanvas = {
             }
             cx = startX + 8;
             row.forEach((cell, i) => {
-                const isHighlight = typeof cell === 'object' && cell.highlight;
-                const text = typeof cell === 'object' ? cell.text : cell;
-                ctx.fillStyle = isHighlight ? '#DC2626' : '#0F172A';
-                ctx.font = `${isHighlight ? 'bold ' : ''}10px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif`;
-                ctx.fillText(String(text).substring(0, 20), cx, cursorY + 15);
+                const cellBg = highlightMap[`${rIdx}_${i}`];
+                if (cellBg) {
+                    ctx.save();
+                    ctx.fillStyle = cellBg;
+                    ctx.fillRect(cx - 8, cursorY, colWidths[i], rowH);
+                    ctx.restore();
+                }
+                const text = String(typeof cell === 'object' ? cell.text : cell);
+                const isAbnormal = typeof cell === 'object' && cell.abnormal;
+                ctx.fillStyle = isAbnormal ? '#DC2626' : '#0F172A';
+                ctx.font = `${isAbnormal ? 'bold ' : ''}10px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif`;
+                ctx.fillText(text.substring(0, 20), cx, cursorY + 15);
+                this._addText(state.pageNum - 1, text, cx, cursorY + 15, 10, 'left');
                 cx += colWidths[i];
             });
             cursorY += rowH;
@@ -1454,8 +1488,8 @@ const PDFCanvas = {
         let x = this.MARGIN_L;
         items.forEach(item => {
             const text = typeof item === 'string' ? item : item.text;
-            const bg = typeof item === 'string' ? '#E0F2FE' : (item.bg || '#E0F2FE');
-            const color = typeof item === 'string' ? '#0369A1' : (item.color || '#0369A1');
+            const bg = typeof item === 'string' ? '#E0F2FE' : (item.bg || item.color || '#E0F2FE');
+            const color = typeof item === 'string' ? '#0369A1' : (item.fg || '#0369A1');
             ctx.font = `10px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif`;
             const metrics = ctx.measureText(text);
             const w = metrics.width + 16;
@@ -1464,6 +1498,7 @@ const PDFCanvas = {
             this._roundRect(ctx, x, state.y - 13, w, 20, 10, true, false);
             ctx.fillStyle = color;
             ctx.fillText(text, x + 8, state.y + 1);
+            this._addText(state.pageNum - 1, text, x + 8, state.y + 1, 10, 'left');
             x += w + 8;
         });
         state.y += 18;
@@ -1517,13 +1552,30 @@ const PDFCanvas = {
 
     buildPDF(filename) {
         const pages = this._pages;
+        const layers = this._textLayers;
         if (!pages || !pages.length) return;
         const { jsPDF } = window.jspdf;
         const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
+        const PT_TO_PX = 1;
         pages.forEach((c, i) => {
             if (i > 0) pdf.addPage();
             const data = c.toDataURL('image/jpeg', 0.95);
             pdf.addImage(data, 'JPEG', 0, 0, this.PAGE_W, this.PAGE_H);
+            const pageLayers = layers[i] || [];
+            if (pageLayers.length && pdf.setTextRenderingMode) {
+                try {
+                    pdf.setTextRenderingMode(3);
+                    pageLayers.forEach(t => {
+                        pdf.setFontSize(t.size * 0.75);
+                        const align = t.align || 'left';
+                        let x = t.x;
+                        if (align === 'right') x = t.x;
+                        else if (align === 'center') x = t.x;
+                        pdf.text(t.text, x, t.y, { align });
+                    });
+                    pdf.setTextRenderingMode(0);
+                } catch (e) { console.warn('text layer skipped:', e); }
+            }
         });
         pdf.save(filename);
     },
@@ -1531,6 +1583,7 @@ const PDFCanvas = {
     startDocument(bgColor = '#F8FAF9') {
         const first = this.createPage(bgColor);
         this._pages = [];
+        this._textLayers = [[]];
         this._state = {
             canvas: first.canvas,
             ctx: first.ctx,
@@ -1694,14 +1747,13 @@ const BudgetModule = {
 
     apply() {
         if (!this.budgetItems.length) return;
-        State.selectedItemIds = this.budgetItems;
+        State.selectedItemIds = [...this.budgetItems];
         State.savePackage();
         PackageModule.renderPackages();
         PackageModule.renderItems();
-        PackageModule.renderSelectedList();
-        PackageModule.renderPrice();
+        PackageModule.renderSelected();
         PackageModule.renderRecommend();
-        showToast(`已应用预算方案：共${this.budgetItems.length}项`, 'success');
+        showToast(`已应用预算方案：共${this.budgetItems.length}项，已同步到已选列表`, 'success');
     },
 
     reset() {
@@ -1730,7 +1782,14 @@ const ConflictModal = {
     },
 
     async show({ year, existingIndicators, newIndicators, altYear }) {
-        if (this.applyAll) return this.applyAll;
+        if (this.applyAll) {
+            if (this.applyAll === 'newyear') {
+                let y = new Date().getFullYear();
+                while (State.reports.find(r => r.year === y)) y++;
+                return { choice: 'newyear', altYear: y };
+            }
+            return { choice: this.applyAll, altYear };
+        }
 
         return new Promise(resolve => {
             this.resolveCallbacks.push(resolve);
@@ -1824,8 +1883,8 @@ const TrackerModal = {
         let highCount = 0, lowCount = 0;
         const statuses = dataPoints.map(d => {
             const st = ReportModule.getIndicatorStatus(d.value, rule);
-            if (st.type === 'high') highCount++;
-            if (st.type === 'low') lowCount++;
+            if (st.type === 'up') highCount++;
+            if (st.type === 'down') lowCount++;
             return { ...d, status: st };
         });
 
@@ -1835,7 +1894,7 @@ const TrackerModal = {
 
         $('#tracker-title').innerHTML = `📊 ${rule.name} · 历年追踪`;
 
-        const statusCls = latest.status.type === 'normal' ? 'normal' : (latest.status.type === 'high' ? 'high' : 'low');
+        const statusCls = latest.status.type === 'normal' ? 'normal' : (latest.status.type === 'up' ? 'high' : 'low');
         $('#tracker-overview').innerHTML = `
             <div>
                 <div class="tracker-overview-name">${rule.name}</div>
@@ -1890,8 +1949,8 @@ const TrackerModal = {
         if (trend === 'down') adviceList.push({ type: 'trend', text: `📉 ${rule.name}呈逐年降低趋势，请咨询医生是否需要调整` });
         if (highCount >= 2) adviceList.push({ type: 'warn', text: `近${dataPoints.length}年有${highCount}次超出正常高值，建议${rule.highAdvice}` });
         if (lowCount >= 2) adviceList.push({ type: 'warn', text: `近${dataPoints.length}年有${lowCount}次低于正常值，建议${rule.lowAdvice}` });
-        if (latest.status.type === 'high') adviceList.push({ type: 'danger', text: `🔴 ${latest.year}年最新值偏高：${rule.highAdvice}` });
-        if (latest.status.type === 'low') adviceList.push({ type: 'danger', text: `🟠 ${latest.year}年最新值偏低：${rule.lowAdvice}` });
+        if (latest.status.type === 'up') adviceList.push({ type: 'danger', text: `🔴 ${latest.year}年最新值偏高：${rule.highAdvice}` });
+        if (latest.status.type === 'down') adviceList.push({ type: 'danger', text: `🟠 ${latest.year}年最新值偏低：${rule.lowAdvice}` });
         if (statuses.every(s => s.status.type === 'normal')) adviceList.push({ type: 'success', text: `✅ 所有年份均在正常范围内，继续保持健康的生活方式！` });
         adviceList.push({ type: 'info', text: `💡 建议每年定期追踪此指标，保持连续${Math.max(3, dataPoints.length + 1)}年以上数据更有参考价值` });
 
@@ -1930,7 +1989,7 @@ const TrackerModal = {
                         pointRadius: 5,
                         pointBackgroundColor: data.map(v => {
                             const st = ReportModule.getIndicatorStatus(v, rule);
-                            return st.type === 'normal' ? rule.color : (st.type === 'high' ? '#DC2626' : '#F59E0B');
+                            return st.type === 'normal' ? rule.color : (st.type === 'up' ? '#DC2626' : '#F59E0B');
                         }),
                         pointBorderColor: '#fff',
                         pointBorderWidth: 2,
