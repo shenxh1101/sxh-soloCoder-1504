@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>康源体检中心 · 套餐定制与历年报告对比</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&family=Noto+Serif+SC:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header class="app-header">
+        <div class="header-inner">
+            <div class="brand">
+                <div class="brand-logo">
+                    <svg viewBox="0 0 32 32" width="32" height="32" fill="none">
+                        <rect x="4" y="4" width="24" height="24" rx="6" fill="url(#lg)"/>
+                        <path d="M10 16h12M16 10v12" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+                        <defs>
+                            <linearGradient id="lg" x1="4" y1="4" x2="28" y2="28">
+                                <stop stop-color="#10B981"/>
+                                <stop offset="1" stop-color="#059669"/>
+                            </linearGradient>
+                        </defs>
+                    </svg>
+                </div>
+                <div class="brand-text">
+                    <h1 class="brand-name">康源体检中心</h1>
+                    <p class="brand-slogan">专业守护 · 健康相伴</p>
+                </div>
+            </div>
+            <nav class="main-tabs" role="tablist">
+                <button class="tab-btn active" role="tab" data-tab="package">
+                    <span class="tab-icon">📋</span>
+                    <span>套餐定制</span>
+                </button>
+                <button class="tab-btn" role="tab" data-tab="report">
+                    <span class="tab-icon">📊</span>
+                    <span>报告对比</span>
+                </button>
+            </nav>
+        </div>
+    </header>
+
+    <main class="app-main">
+        <section id="package-panel" class="tab-panel active">
+            <div class="package-layout">
+                <div class="package-main">
+                    <div class="card user-info-card fade-in" style="--delay:0.05s">
+                        <div class="card-header">
+                            <h2 class="card-title">
+                                <span class="title-icon">👤</span>
+                                用户基本信息
+                            </h2>
+                            <span class="card-subtitle">填写后可获得个性化加项推荐</span>
+                        </div>
+                        <div class="card-body">
+                            <div class="info-form">
+                                <div class="form-group">
+                                    <label for="user-age">年龄</label>
+                                    <input type="number" id="user-age" min="1" max="120" placeholder="请输入年龄" value="35">
+                                    <span class="form-suffix">岁</span>
+                                </div>
+                                <div class="form-group">
+                                    <label>性别</label>
+                                    <div class="gender-options">
+                                        <label class="gender-opt">
+                                            <input type="radio" name="gender" value="male" checked>
+                                            <span class="gender-label">
+                                                <span class="gender-icon">♂</span>
+                                                男性
+                                            </span>
+                                        </label>
+                                        <label class="gender-opt">
+                                            <input type="radio" name="gender" value="female">
+                                            <span class="gender-label">
+                                                <span class="gender-icon">♀</span>
+                                                女性
+                                            </span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card fade-in" style="--delay:0.1s">
+                        <div class="card-header">
+                            <h2 class="card-title">
+                                <span class="title-icon">💎</span>
+                                基础套餐
+                            </h2>
+                            <span class="card-subtitle">选择一款套餐快速开始，或自由组合项目</span>
+                        </div>
+                        <div class="card-body">
+                            <div class="package-grid" id="package-grid"></div>
+                        </div>
+                    </div>
+
+                    <div class="card recommend-card fade-in" style="--delay:0.15s" id="recommend-card" hidden>
+                        <div class="card-header">
+                            <h2 class="card-title">
+                                <span class="title-icon">⭐</span>
+                                智能加项推荐
+                            </h2>
+                            <span class="recommend-badge">基于您的年龄与性别</span>
+                        </div>
+                        <div class="card-body">
+                            <div class="recommend-grid" id="recommend-grid"></div>
+                        </div>
+                    </div>
+
+                    <div class="card fade-in" style="--delay:0.2s">
+                        <div class="card-header">
+                            <h2 class="card-title">
+                                <span class="title-icon">🔬</span>
+                                项目库
+                            </h2>
+                            <span class="card-subtitle">
+                                共 <strong id="total-items">0</strong> 项 · 
+                                已选 <strong id="selected-count">0</strong> 项
+                            </span>
+                        </div>
+                        <div class="card-body">
+                            <div class="item-categories" id="item-categories"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <aside class="package-summary">
+                    <div class="summary-sticky">
+                        <div class="card summary-card">
+                            <div class="card-header">
+                                <h2 class="card-title">
+                                    <span class="title-icon">🛒</span>
+                                    已选项目
+                                </h2>
+                                <button class="btn-text" id="clear-all-btn">清空</button>
+                            </div>
+                            <div class="card-body summary-body">
+                                <div class="selected-list" id="selected-list">
+                                    <div class="empty-state">
+                                        <div class="empty-icon">📭</div>
+                                        <p>还没有选择任何项目</p>
+                                        <p class="empty-hint">从上方套餐或项目库中勾选</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="summary-footer">
+                                <div class="price-row">
+                                    <span class="price-label">原价合计</span>
+                                    <span class="price-original" id="original-price">¥0</span>
+                                </div>
+                                <div class="price-row discount-row">
+                                    <span class="price-label">
+                                        优惠折扣
+                                        <span class="discount-tag" id="discount-tag" hidden>无折扣</span>
+                                    </span>
+                                    <span class="price-discount" id="discount-amount">¥0</span>
+                                </div>
+                                <div class="price-row total-row">
+                                    <span class="price-label">应付总价</span>
+                                    <span class="price-total" id="total-price">¥0</span>
+                                </div>
+                                <div class="summary-actions">
+                                    <button class="btn btn-secondary btn-block" id="export-csv-btn">
+                                        <span>📄</span> 导出报价CSV
+                                    </button>
+                                    <button class="btn btn-primary btn-block" id="export-pdf-btn">
+                                        <span>📑</span> 生成报价单PDF
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </aside>
+            </div>
+        </section>
+
+        <section id="report-panel" class="tab-panel">
+            <div class="report-layout">
+                <div class="report-main">
+                    <div class="card fade-in" style="--delay:0.05s">
+                        <div class="card-header">
+                            <h2 class="card-title">
+                                <span class="title-icon">📁</span>
+                                历年报告管理
+                            </h2>
+                            <div class="header-actions">
+                                <label class="btn btn-ghost">
+                                    <span>📤</span> 上传PDF
+                                    <input type="file" id="pdf-upload" accept="application/pdf" multiple hidden>
+                                </label>
+                                <button class="btn btn-primary" id="add-report-btn">
+                                    <span>➕</span> 新增报告
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="report-tabs" id="report-tabs">
+                                <div class="empty-state" id="no-report-hint">
+                                    <div class="empty-icon">📝</div>
+                                    <p>暂无体检报告数据</p>
+                                    <p class="empty-hint">点击"新增报告"开始录入您的体检数据</p>
+                                </div>
+                            </div>
+
+                            <div class="report-form-area" id="report-form-area" hidden>
+                                <div class="form-section-header">
+                                    <h3 id="current-report-title" class="section-title">2024年体检指标</h3>
+                                    <button class="btn-text danger" id="delete-report-btn">
+                                        <span>🗑️</span> 删除此份报告
+                                    </button>
+                                </div>
+                                <form class="indicator-form" id="indicator-form" onsubmit="return false;">
+                                    <div class="indicator-grid" id="indicator-grid"></div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card fade-in" style="--delay:0.1s">
+                        <div class="card-header">
+                            <h2 class="card-title">
+                                <span class="title-icon">📈</span>
+                                指标趋势图
+                            </h2>
+                            <div class="chart-legend-select" id="chart-legend-select"></div>
+                        </div>
+                        <div class="card-body">
+                            <div class="chart-container" id="chart-wrap">
+                                <div class="empty-state" id="chart-empty">
+                                    <div class="empty-icon">📊</div>
+                                    <p>暂无数据可展示</p>
+                                    <p class="empty-hint">请先录入至少两份不同年份的报告</p>
+                                </div>
+                                <canvas id="trend-chart" hidden></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card fade-in" style="--delay:0.15s">
+                        <div class="card-header">
+                            <h2 class="card-title">
+                                <span class="title-icon">🧭</span>
+                                趋势分析
+                            </h2>
+                            <span class="card-subtitle">基于多年数据的综合判断</span>
+                        </div>
+                        <div class="card-body">
+                            <div class="trend-analysis" id="trend-analysis">
+                                <div class="empty-state">
+                                    <div class="empty-icon">🔍</div>
+                                    <p>暂无足够数据进行趋势分析</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <aside class="report-side">
+                    <div class="side-sticky">
+                        <div class="card alert-card fade-in" style="--delay:0.1s">
+                            <div class="card-header">
+                                <h2 class="card-title">
+                                    <span class="title-icon">🚨</span>
+                                    异常指标预警
+                                </h2>
+                                <span class="card-subtitle">最新报告 · 共 <strong id="abnormal-count">0</strong> 项异常</span>
+                            </div>
+                            <div class="card-body">
+                                <div class="abnormal-list" id="abnormal-list">
+                                    <div class="empty-state">
+                                        <div class="empty-icon">✅</div>
+                                        <p>暂无异常指标</p>
+                                        <p class="empty-hint">继续保持健康的生活习惯</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card advice-card fade-in" style="--delay:0.15s">
+                            <div class="card-header">
+                                <h2 class="card-title">
+                                    <span class="title-icon">💡</span>
+                                    健康建议
+                                </h2>
+                                <span class="card-subtitle">基于预设规则生成</span>
+                            </div>
+                            <div class="card-body">
+                                <div class="advice-list" id="advice-list">
+                                    <div class="empty-state">
+                                        <div class="empty-icon">🌿</div>
+                                        <p>暂无针对性建议</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="summary-footer no-border">
+                                <div class="summary-actions">
+                                    <button class="btn btn-secondary btn-block" id="export-indicators-btn">
+                                        <span>📄</span> 导出历年指标CSV
+                                    </button>
+                                    <button class="btn btn-primary btn-block" id="export-report-pdf-btn">
+                                        <span>📑</span> 生成对比PDF
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </aside>
+            </div>
+        </section>
+    </main>
+
+    <footer class="app-footer">
+        <div class="footer-inner">
+            <p>© 2024 康源体检中心 · 本工具仅供参考，具体诊疗请遵医嘱</p>
+        </div>
+    </footer>
+
+    <div class="toast" id="toast"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
