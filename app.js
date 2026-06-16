@@ -161,6 +161,15 @@ const RECOMMEND_RULES = [
 
 const INDICATOR_KEYS = INDICATOR_RULES.map(r => r.key);
 
+const INDICATOR_GROUPS = [
+    { id: 'glucose',  name: '血糖',   icon: '🍬', keys: ['fastingGlucose'] },
+    { id: 'lipid',    name: '血脂',   icon: '🫀', keys: ['totalCholesterol', 'triglyceride', 'hdlCholesterol', 'ldlCholesterol'] },
+    { id: 'bp',       name: '血压',   icon: '💓', keys: ['systolicBP', 'diastolicBP'] },
+    { id: 'liver',    name: '肝功能', icon: '🫁', keys: ['alt', 'ast'] },
+    { id: 'kidney',   name: '肾功能', icon: '🫘', keys: ['creatinine', 'uricAcid'] },
+    { id: 'body',     name: '体质',   icon: '⚖️', keys: ['bmi'] },
+];
+
 /* ======================================================================
  *  2. 工具函数 & 状态管理
  * ====================================================================== */
@@ -265,22 +274,32 @@ const LS = {
 const State = {
     user: { age: 35, gender: 'male' },
     selectedItemIds: [],
-    reports: [], // [{year, indicators:{...}}]
+    reports: [],
     activeReportYear: null,
     activeIndicators: new Set(['fastingGlucose', 'totalCholesterol', 'triglyceride', 'systolicBP', 'bmi']),
+    activeGroup: 'all',
+    budgetPreference: 'general',
     trendChart: null,
     load() {
         const u = LS.read(LS.USER_INFO);
         if (u) Object.assign(this.user, u);
         const s = LS.read(LS.PACKAGE_STATE);
         if (s?.selectedItemIds) this.selectedItemIds = s.selectedItemIds.filter(id => getItem(id));
+        if (s?.budgetPreference) this.budgetPreference = s.budgetPreference;
+        if (s?.activeGroup) this.activeGroup = s.activeGroup;
         const r = LS.read(LS.EXAM_REPORTS);
         if (Array.isArray(r)) this.reports = r;
         if (this.reports.length) this.activeReportYear = this.reports[this.reports.length - 1].year;
     },
     saveUser() { LS.write(LS.USER_INFO, this.user); },
-    savePackage() { LS.write(LS.PACKAGE_STATE, { selectedItemIds: this.selectedItemIds }); },
-    saveReports() { LS.write(LS.EXAM_REPORTS, this.reports); }
+    savePackage() { LS.write(LS.PACKAGE_STATE, { selectedItemIds: this.selectedItemIds, budgetPreference: this.budgetPreference, activeGroup: this.activeGroup }); },
+    saveReports() { LS.write(LS.EXAM_REPORTS, this.reports); },
+    getFilteredRules() {
+        if (this.activeGroup === 'all') return INDICATOR_RULES;
+        const grp = INDICATOR_GROUPS.find(g => g.id === this.activeGroup);
+        if (!grp) return INDICATOR_RULES;
+        return INDICATOR_RULES.filter(r => grp.keys.includes(r.key));
+    }
 };
 
 function showToast(msg, type = 'info', dur = 2400) {
@@ -640,6 +659,7 @@ const ReportModule = {
         $('#pdf-upload').onchange = e => this.handlePDFUpload(e);
         $('#export-indicators-btn').onclick = () => ExportModule.exportIndicatorsCSV();
         $('#export-report-pdf-btn').onclick = () => ExportModule.exportReportPDF();
+        $('#paste-parse-btn').onclick = () => this.parsePasteText();
     },
 
     addReport() {
@@ -882,6 +902,62 @@ const ReportModule = {
         });
     },
 
+    parsePasteText() {
+        const pasteArea = $('#paste-area');
+        const hint = $('#paste-hint');
+        const text = pasteArea.innerText.trim();
+        if (!text) { showToast('请先粘贴体检报告文字', 'error'); return; }
+
+        const report = State.reports.find(r => r.year === State.activeReportYear);
+        if (!report) { showToast('请先选择一份报告', 'error'); return; }
+
+        let recognized = 0;
+        const yearMatch = text.match(/(20\d{2})\s*年/);
+        if (yearMatch) {
+            const y = parseInt(yearMatch[1]);
+            if (!State.reports.find(r => r.year === y && r.year !== report.year)) {
+                report.year = y;
+                State.activeReportYear = y;
+            }
+        }
+
+        const bpMatch = text.match(/血压[^0-9]{0,10}(\d{2,3})\s*[\/\~\-]\s*(\d{2,3})/);
+        if (bpMatch) {
+            report.indicators.systolicBP = parseFloat(bpMatch[1]);
+            report.indicators.diastolicBP = parseFloat(bpMatch[2]);
+            recognized += 2;
+        }
+
+        PDF_PARSER.INDICATOR_PATTERNS.forEach(item => {
+            if (item.key === 'systolicBP' || item.key === 'diastolicBP') {
+                if (bpMatch) return;
+            }
+            for (const pat of item.patterns) {
+                const m = text.match(pat);
+                if (m) {
+                    const val = parseFloat(m[m.length - 1]);
+                    if (!isNaN(val) && val > 0) {
+                        report.indicators[item.key] = val;
+                        recognized++;
+                        break;
+                    }
+                }
+            }
+        });
+
+        State.saveReports();
+        this.renderReportTabs();
+        this.renderIndicatorForm();
+        this.updateAll();
+
+        const total = INDICATOR_KEYS.length;
+        const filled = Object.values(report.indicators).filter(v => v != null && !isNaN(v)).length;
+        hint.textContent = `✅ 已识别 ${recognized} 项，共填入 ${filled}/${total} 项`;
+        setTimeout(() => { hint.textContent = ''; }, 5000);
+        pasteArea.innerText = '';
+        showToast(`识别完成：${recognized}项自动填入，其余请手填`, 'success', 3000);
+    },
+
     getIndicatorStatus(v, rule) {
         if (v == null || isNaN(v)) return { cls: '', type: 'normal', txt: '—' };
         if (v > rule.maxNormal) {
@@ -908,11 +984,38 @@ const ReportModule = {
     },
 
     updateAll(updateChart = true) {
+        this.renderGroupFilter();
         this.renderAbnormal();
         this.renderAdvice();
         this.renderTrendAnalysis();
         if (updateChart) this.renderChart();
         this.renderLegendSelect();
+    },
+
+    renderGroupFilter() {
+        const wrap = $('#indicator-group-filter');
+        if (!wrap) return;
+        const allGroups = [{ id: 'all', name: '全部', icon: '📋', keys: INDICATOR_KEYS }, ...INDICATOR_GROUPS];
+        wrap.innerHTML = allGroups.map(g => `
+            <div class="group-chip ${State.activeGroup === g.id ? 'active' : ''}" data-group="${g.id}">
+                <span>${g.icon}</span>
+                <span>${g.name}</span>
+            </div>
+        `).join('');
+        $$('.group-chip', wrap).forEach(c => {
+            c.onclick = () => {
+                State.activeGroup = c.dataset.group;
+                State.savePackage();
+                const filteredRules = State.getFilteredRules();
+                State.activeIndicators = new Set(filteredRules.map(r => r.key));
+                this.renderAbnormal();
+                this.renderAdvice();
+                this.renderTrendAnalysis();
+                this.renderChart();
+                this.renderLegendSelect();
+                this.renderGroupFilter();
+            };
+        });
     },
 
     getLatestReport() {
@@ -924,7 +1027,8 @@ const ReportModule = {
         const list = $('#abnormal-list');
         if (!latest) return;
 
-        const abnormals = INDICATOR_RULES
+        const rules = State.getFilteredRules();
+        const abnormals = rules
             .map(r => ({ rule: r, val: latest.indicators[r.key], status: this.getIndicatorStatus(latest.indicators[r.key], r) }))
             .filter(x => x.status.cls === 'abnormal');
 
@@ -971,13 +1075,14 @@ const ReportModule = {
         const list = $('#advice-list');
         if (!latest) return;
 
+        const rules = State.getFilteredRules();
         const items = [];
-        const abnormalCnt = INDICATOR_RULES.filter(r => {
+        const abnormalCnt = rules.filter(r => {
             const v = latest.indicators[r.key];
             return this.getIndicatorStatus(v, r).cls === 'abnormal';
         }).length;
 
-        INDICATOR_RULES.forEach(r => {
+        rules.forEach(r => {
             const v = latest.indicators[r.key];
             if (v == null || isNaN(v)) return;
             const st = this.getIndicatorStatus(v, r);
@@ -1015,8 +1120,9 @@ const ReportModule = {
 
     getOverallTrendMsg() {
         if (State.reports.length < 2) return '';
+        const rules = State.getFilteredRules();
         const ups = [], downs = [];
-        INDICATOR_RULES.forEach(r => {
+        rules.forEach(r => {
             const trend = this.analyzeTrend(r.key);
             if (trend === 'up') ups.push(r.name);
             if (trend === 'down') downs.push(r.name);
@@ -1033,12 +1139,13 @@ const ReportModule = {
         const items = [];
         if (!latest) return items;
 
-        const abnormalCnt = INDICATOR_RULES.filter(r => {
+        const rules = State.getFilteredRules();
+        const abnormalCnt = rules.filter(r => {
             const v = latest.indicators[r.key];
             return this.getIndicatorStatus(v, r).cls === 'abnormal';
         }).length;
 
-        INDICATOR_RULES.forEach(r => {
+        rules.forEach(r => {
             const v = latest.indicators[r.key];
             if (v == null || isNaN(v)) return;
             const st = this.getIndicatorStatus(v, r);
@@ -1099,7 +1206,7 @@ const ReportModule = {
             return;
         }
 
-        wrap.innerHTML = INDICATOR_RULES.map(r => {
+        wrap.innerHTML = State.getFilteredRules().map(r => {
             const trend = this.analyzeTrend(r.key);
             if (!trend) return '';
             const sorted = State.reports.slice().sort((a, b) => a.year - b.year);
@@ -1163,7 +1270,8 @@ const ReportModule = {
     renderLegendSelect() {
         const wrap = $('#chart-legend-select');
         if (!State.reports.length) { wrap.innerHTML = ''; return; }
-        wrap.innerHTML = INDICATOR_RULES.map(r => `
+        const rules = State.getFilteredRules();
+        wrap.innerHTML = rules.map(r => `
             <div class="legend-chip ${State.activeIndicators.has(r.key) ? 'active' : ''}" 
                  data-key="${r.key}"
                  style="color:${r.color}">
@@ -1428,16 +1536,9 @@ const PDFCanvas = {
         state.y += this.LINE_H;
     },
 
-    writeTable(state, headers, rows, options = {}) {
-        const colWidths = options.colWidths || headers.map(() => Math.floor((this.MARGIN_R - this.MARGIN_L) / headers.length));
-        const rowH = options.rowH || 24;
-        const highlightMap = options.highlightMap || {};
-        this._checkPage(state, rowH + 10);
-
+    _drawTableHeader(state, headers, colWidths, startX, rowH) {
         const { ctx } = state;
-        const startX = this.MARGIN_L;
-        let cursorY = state.y;
-
+        const cursorY = state.y;
         ctx.fillStyle = '#F1F5F9';
         this._roundRect(ctx, startX, cursorY, this.MARGIN_R - startX, rowH, 3, true, false);
         ctx.fillStyle = '#0F172A';
@@ -1448,19 +1549,30 @@ const PDFCanvas = {
             this._addText(state.pageNum - 1, h, cx, cursorY + 15, 10, 'left');
             cx += colWidths[i];
         });
-        cursorY += rowH;
+        state.y = cursorY + rowH;
+    },
+
+    writeTable(state, headers, rows, options = {}) {
+        const colWidths = options.colWidths || headers.map(() => Math.floor((this.MARGIN_R - this.MARGIN_L) / headers.length));
+        const rowH = options.rowH || 24;
+        const highlightMap = options.highlightMap || {};
+        const startX = this.MARGIN_L;
+        this._checkPage(state, rowH * 2 + 10);
+
+        this._drawTableHeader(state, headers, colWidths, startX, rowH);
 
         rows.forEach((row, rIdx) => {
-            if (cursorY + rowH > this.MARGIN_B) {
-                state.y = cursorY;
+            if (state.y + rowH > this.MARGIN_B) {
                 this._newPage(state);
-                cursorY = state.y;
+                this._drawTableHeader(state, headers, colWidths, startX, rowH);
             }
+            const { ctx } = state;
+            const cursorY = state.y;
             if (rIdx % 2 === 1) {
                 ctx.fillStyle = '#FAFAFA';
                 ctx.fillRect(startX, cursorY, this.MARGIN_R - startX, rowH);
             }
-            cx = startX + 8;
+            let cx = startX + 8;
             row.forEach((cell, i) => {
                 const cellBg = highlightMap[`${rIdx}_${i}`];
                 if (cellBg) {
@@ -1474,12 +1586,13 @@ const PDFCanvas = {
                 ctx.fillStyle = isAbnormal ? '#DC2626' : '#0F172A';
                 ctx.font = `${isAbnormal ? 'bold ' : ''}10px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif`;
                 ctx.fillText(text.substring(0, 20), cx, cursorY + 15);
-                this._addText(state.pageNum - 1, text, cx, cursorY + 15, 10, 'left');
                 cx += colWidths[i];
             });
-            cursorY += rowH;
+            const rowText = row.map(c => String(typeof c === 'object' ? c.text : c)).join('\t');
+            this._addText(state.pageNum - 1, rowText, startX, cursorY + 15, 10, 'left');
+            state.y = cursorY + rowH;
         });
-        state.y = cursorY + 14;
+        state.y += 14;
     },
 
     writeBadgeRow(state, items) {
@@ -1556,25 +1669,29 @@ const PDFCanvas = {
         if (!pages || !pages.length) return;
         const { jsPDF } = window.jspdf;
         const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
-        const PT_TO_PX = 1;
         pages.forEach((c, i) => {
             if (i > 0) pdf.addPage();
             const data = c.toDataURL('image/jpeg', 0.95);
             pdf.addImage(data, 'JPEG', 0, 0, this.PAGE_W, this.PAGE_H);
             const pageLayers = layers[i] || [];
-            if (pageLayers.length && pdf.setTextRenderingMode) {
+            if (pageLayers.length) {
                 try {
-                    pdf.setTextRenderingMode(3);
+                    if (pdf.setTextRenderingMode) pdf.setTextRenderingMode(3);
+                    pdf.setFont('helvetica', 'normal');
                     pageLayers.forEach(t => {
                         pdf.setFontSize(t.size * 0.75);
+                        const pdfY = t.y;
+                        let pdfX = t.x;
                         const align = t.align || 'left';
-                        let x = t.x;
-                        if (align === 'right') x = t.x;
-                        else if (align === 'center') x = t.x;
-                        pdf.text(t.text, x, t.y, { align });
+                        if (align === 'center') pdfX = t.x;
+                        else if (align === 'right') pdfX = t.x;
+                        try { pdf.text(t.text, pdfX, pdfY, { align }); } catch (_) {}
                     });
-                    pdf.setTextRenderingMode(0);
-                } catch (e) { console.warn('text layer skipped:', e); }
+                    if (pdf.setTextRenderingMode) pdf.setTextRenderingMode(0);
+                } catch (e) {
+                    console.warn('text layer skipped:', e);
+                    try { if (pdf.setTextRenderingMode) pdf.setTextRenderingMode(0); } catch (_) {}
+                }
             }
         });
         pdf.save(filename);
@@ -1609,10 +1726,25 @@ const BudgetModule = {
     budgetItems: [],
     decisions: [],
 
+    PREF_CONFIG: {
+        general: { name: '综合均衡', boost: [], protect: [] },
+        tumor:   { name: '重视肿瘤筛查', boost: ['TUMOR_5', 'TUMOR_FULL', 'LUNG_CT', 'PSA', 'HPV', 'TCT', 'MAMMOGRAPHY', 'GASTROSCOPY', 'COLONOSCOPY'], protect: ['TUMOR_5', 'TUMOR_FULL', 'LUNG_CT'] },
+        cardio:  { name: '重视心血管', boost: ['ECG', 'ECHOCARDIO', 'CAROTID_B', 'TCD', 'LIPIDS', 'GLUCOSE', 'B_ULTRASOUND', 'LIVER_FUNC', 'KIDNEY_FUNC'], protect: ['ECG', 'ECHOCARDIO', 'CAROTID_B', 'TCD'] },
+        female:  { name: '女性专项', boost: ['MAMMOGRAPHY', 'BREAST_B', 'TCT', 'HPV', 'GYNECOLOGY', 'GYN_B', 'THYROID_B', 'THYROID_FUNC'], protect: ['MAMMOGRAPHY', 'BREAST_B', 'TCT', 'HPV', 'GYNECOLOGY', 'GYN_B'] },
+    },
+
     init() {
         $('#budget-calc-btn').onclick = () => this.calculate();
         $('#budget-apply-btn').onclick = () => this.apply();
         $('#budget-reset-btn').onclick = () => this.reset();
+        const prefSelect = $('#budget-preference');
+        if (prefSelect) {
+            prefSelect.value = State.budgetPreference || 'general';
+            prefSelect.onchange = () => {
+                State.budgetPreference = prefSelect.value;
+                State.savePackage();
+            };
+        }
     },
 
     calculate() {
@@ -1620,10 +1752,15 @@ const BudgetModule = {
         const budget = parseInt(input.value);
         if (!budget || budget < 100) { showToast('请输入有效的预算金额（≥100）', 'error'); return; }
 
+        const pref = State.budgetPreference || 'general';
+        const prefSelect = $('#budget-preference');
+        if (prefSelect) { State.budgetPreference = prefSelect.value; State.savePackage(); }
+
         const decisions = [];
         const mandatoryCats = ['检验'];
-        const preferredCats = ['影像', '功能'];
-        const bonusCats = ['专科'];
+        const config = this.PREF_CONFIG[pref] || this.PREF_CONFIG.general;
+
+        decisions.push({ type: 'info', icon: '🎯', title: `偏好模式：${config.name}`, reason: pref !== 'general' ? `优先保留${config.name}相关项目` : '综合性价比最优搭配' });
 
         let currentIds = [...State.selectedItemIds];
         let currentPrice = currentIds.reduce((s, id) => s + (getItem(id)?.price || 0), 0);
@@ -1632,7 +1769,7 @@ const BudgetModule = {
         const ranked = EXAM_ITEMS
             .map(it => ({
                 ...it,
-                score: this._calcScore(it)
+                score: this._calcScore(it, pref)
             }))
             .sort((a, b) => b.score - a.score);
 
@@ -1647,25 +1784,26 @@ const BudgetModule = {
                 if (currentPrice <= budget) break;
                 if (!selected.has(it.id)) continue;
                 if (mandatoryCats.includes(it.category)) continue;
+                if (config.protect.includes(it.id)) continue;
                 selected.delete(it.id);
                 currentPrice -= it.price;
-                dropped.push({ ...it, reason: this._dropReason(it) });
+                dropped.push({ ...it, reason: this._dropReason(it, pref) });
             }
         } else {
-            decisions.push({ type: 'info', icon: 'info', title: `当前已选¥${currentPrice}，剩余预算¥${budget - currentPrice}`, reason: '优先补充高性价比检查' });
+            decisions.push({ type: 'info', icon: 'info', title: `当前已选¥${currentPrice}，剩余预算¥${budget - currentPrice}`, reason: `优先补充${config.name}相关项目` });
         }
 
         for (const it of ranked) {
             if (currentPrice + it.price > budget) continue;
             if (selected.has(it.id)) {
                 if (!dropped.find(d => d.id === it.id)) {
-                    kept.push({ ...it, reason: this._keepReason(it) });
+                    kept.push({ ...it, reason: this._keepReason(it, pref) });
                 }
                 continue;
             }
             selected.add(it.id);
             currentPrice += it.price;
-            added.push({ ...it, reason: this._addReason(it) });
+            added.push({ ...it, reason: this._addReason(it, pref) });
             if (added.length >= 15) break;
         }
 
@@ -1678,7 +1816,7 @@ const BudgetModule = {
         this._render(budget, currentPrice, kept.length + added.length, dropped.length);
     },
 
-    _calcScore(it) {
+    _calcScore(it, pref = 'general') {
         let s = it.price > 0 ? 100 / it.price : 0;
         if (it.isHot) s += 30;
         if (['检验'].includes(it.category)) s += 25;
@@ -1687,23 +1825,31 @@ const BudgetModule = {
         if (State.user.gender === 'female' && ['MAMMOGRAPHY', 'BREAST_B', 'TCT', 'HPV'].includes(it.id)) s += 50;
         if (State.user.age >= 40 && ['TUMOR_5', 'BMD', 'TCD'].includes(it.id)) s += 40;
         if (State.user.age >= 50 && ['HEAD_CT', 'GASTROSCOPY'].includes(it.id)) s += 45;
+        const config = this.PREF_CONFIG[pref];
+        if (config && config.boost.includes(it.id)) s += 60;
         return s;
     },
 
-    _keepReason(it) {
+    _keepReason(it, pref = 'general') {
+        const config = this.PREF_CONFIG[pref];
+        if (config && config.boost.includes(it.id)) return `${config.name}重点保护项目`;
         if (['检验'].includes(it.category)) return '基础检验必做项目';
         if (it.isHot) return '临床推荐的热门筛查';
         if (State.user.age >= 40 && ['PSA', 'MAMMOGRAPHY'].includes(it.id)) return '您年龄段重点推荐';
         return '常规健康筛查项目';
     },
 
-    _dropReason(it) {
+    _dropReason(it, pref = 'general') {
+        const config = this.PREF_CONFIG[pref];
+        if (pref !== 'general' && config && !config.boost.includes(it.id)) return `非${config.name}核心项目，预算优先留给专项`;
         if (['专科'].includes(it.category)) return '可根据需要后续加项';
         if (it.price > 300) return '高值项目，优先保留基础检查';
         return '预算有限时可暂缓';
     },
 
-    _addReason(it) {
+    _addReason(it, pref = 'general') {
+        const config = this.PREF_CONFIG[pref];
+        if (config && config.boost.includes(it.id)) return `${config.name}专项推荐`;
         if (State.user.gender === 'male' && it.id === 'PSA') return '男性40岁以上专项';
         if (State.user.gender === 'female' && ['MAMMOGRAPHY', 'TCT'].includes(it.id)) return '女性专项筛查推荐';
         if (['检验'].includes(it.category)) return '补充实验室检查维度';
@@ -2083,16 +2229,18 @@ const ExportModule = {
     exportIndicatorsCSV() {
         if (!State.reports.length) { showToast('没有报告数据', 'error'); return; }
         const reports = State.reports.slice().sort((a, b) => a.year - b.year);
-        const headers = ['年份'].concat(INDICATOR_RULES.map(r => `${r.name}(${r.unit})`));
+        const rules = State.getFilteredRules();
+        const fKeys = rules.map(r => r.key);
+        const headers = ['年份'].concat(rules.map(r => `${r.name}(${r.unit})`));
         let csv = '\uFEFF' + headers.join(',') + '\n';
         reports.forEach(rep => {
-            const row = [rep.year].concat(INDICATOR_KEYS.map(k => {
+            const row = [rep.year].concat(fKeys.map(k => {
                 const v = rep.indicators[k];
                 return (v == null || isNaN(v)) ? '' : v;
             }));
             csv += row.join(',') + '\n';
         });
-        const refRow = ['参考范围'].concat(INDICATOR_RULES.map(r => `${r.minNormal}~${r.maxNormal} ${r.unit}`));
+        const refRow = ['参考范围'].concat(rules.map(r => `${r.minNormal}~${r.maxNormal} ${r.unit}`));
         csv += refRow.join(',') + '\n';
         this.downloadBlob(csv, 'text/csv;charset=utf-8', `历年体检指标_${new Date().toISOString().slice(0, 10)}.csv`);
         showToast('指标CSV已导出', 'success');
@@ -2161,7 +2309,8 @@ const ExportModule = {
             PDFCanvas.writeSubtitle(s, `康源体检中心  |  年龄 ${State.user.age} 岁 ${gender}  |  对比年份 ${years.join(' / ')}`);
 
             PDFCanvas.writeSectionHeader(s, '一、最新报告异常预警', '#EF4444', '#FEF2F2', '#991B1B');
-            const abnormals = INDICATOR_RULES.filter(r => {
+            const filteredRules = State.getFilteredRules();
+            const abnormals = filteredRules.filter(r => {
                 const v = latest.indicators[r.key];
                 return ReportModule.getIndicatorStatus(v, r).cls === 'abnormal';
             });
@@ -2195,7 +2344,7 @@ const ExportModule = {
             const fixed = [100, 45, 100];
             const yearColW = Math.floor((totalColW - fixed.reduce((a, b) => a + b, 0)) / Math.max(years.length, 1));
             const colWidths = [...fixed, ...Array(Math.max(years.length, 1)).fill(yearColW)];
-            const rows = INDICATOR_RULES.map(r => {
+            const rows = filteredRules.map(r => {
                 const row = [r.name, r.unit, `${r.minNormal}~${r.maxNormal}`];
                 years.forEach(yr => {
                     const rep = State.reports.find(x => x.year === yr);
@@ -2205,7 +2354,7 @@ const ExportModule = {
                 return row;
             });
             const highlightMap = {};
-            INDICATOR_RULES.forEach((r, ri) => {
+            filteredRules.forEach((r, ri) => {
                 years.forEach((yr, yi) => {
                     const rep = State.reports.find(x => x.year === yr);
                     const v = rep?.indicators[r.key];
@@ -2222,7 +2371,7 @@ const ExportModule = {
             if (State.reports.length >= 2) {
                 PDFCanvas.writeSectionHeader(s, '三、趋势分析与健康建议', '#8B5CF6', '#F5F3FF', '#5B21B6');
 
-                INDICATOR_RULES.forEach(r => {
+                filteredRules.forEach(r => {
                     const trend = ReportModule.analyzeTrend(r.key);
                     if (!trend) return;
                     const sorted = State.reports.slice().sort((a, b) => a.year - b.year);

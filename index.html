@@ -129,6 +129,15 @@
                                             <input type="number" id="budget-input" min="100" max="50000" placeholder="如: 2000">
                                         </div>
                                     </div>
+                                    <div class="form-group">
+                                        <label>健康偏好</label>
+                                        <select id="budget-preference" class="budget-pref-select">
+                                            <option value="general">综合均衡</option>
+                                            <option value="tumor">🧬 重视肿瘤筛查</option>
+                                            <option value="cardio">❤️ 重视心血管</option>
+                                            <option value="female">👩 女性专项</option>
+                                        </select>
+                                    </div>
                                     <button class="btn btn-primary" id="budget-calc-btn">
                                         <span>✨</span> 生成推荐方案
                                     </button>
@@ -249,6 +258,14 @@
                                         <span>🗑️</span> 删除此份报告
                                     </button>
                                 </div>
+                                <div class="paste-area-wrap">
+                                    <div class="paste-area" id="paste-area" contenteditable="true" 
+                                         data-placeholder="📋 粘贴体检报告文字，自动识别指标数据&#10;支持格式：空腹血糖 6.8、血压 130/85、总胆固醇5.6..."></div>
+                                    <button class="btn btn-secondary" id="paste-parse-btn" style="margin-top:6px">
+                                        <span>🔍</span> 识别并填入
+                                    </button>
+                                    <span class="paste-hint" id="paste-hint"></span>
+                                </div>
                                 <form class="indicator-form" id="indicator-form" onsubmit="return false;">
                                     <div class="indicator-grid" id="indicator-grid"></div>
                                 </form>
@@ -265,6 +282,7 @@
                             <div class="chart-legend-select" id="chart-legend-select"></div>
                         </div>
                         <div class="card-body">
+                            <div class="indicator-group-filter" id="indicator-group-filter"></div>
                             <div class="chart-container" id="chart-wrap">
                                 <div class="empty-state" id="chart-empty">
                                     <div class="empty-icon">📊</div>
