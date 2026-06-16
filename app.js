@@ -690,10 +690,13 @@ const ReportModule = {
         e.target.value = '';
 
         showToast(`正在解析 ${files.length} 个PDF...`, 'info');
+        ConflictModal.resetApplyAll();
 
         const curYear = new Date().getFullYear();
         let addedCount = 0;
         let extractedTotal = 0;
+        let mergedCount = 0;
+        let overwrittenCount = 0;
 
         for (const file of files) {
             const result = await PDF_PARSER.extractFromPDF(file);
@@ -714,7 +717,34 @@ const ReportModule = {
 
             const existing = State.reports.find(r => r.year === year);
             if (existing) {
-                Object.assign(existing.indicators, extracted);
+                const empty = this.emptyIndicators();
+                Object.assign(empty, extracted);
+                let altYear = curYear;
+                while (State.reports.find(r => r.year === altYear)) altYear++;
+
+                const choice = await ConflictModal.show({
+                    year,
+                    existingIndicators: existing.indicators,
+                    newIndicators: empty,
+                    altYear
+                });
+
+                if (choice.choice === 'skip') continue;
+                if (choice.choice === 'overwrite') {
+                    Object.assign(existing.indicators, empty);
+                    overwrittenCount++;
+                } else if (choice.choice === 'merge') {
+                    INDICATOR_KEYS.forEach(k => {
+                        if (empty[k] != null && !isNaN(empty[k])) existing.indicators[k] = empty[k];
+                    });
+                    mergedCount++;
+                } else if (choice.choice === 'newyear') {
+                    const newY = choice.altYear;
+                    if (!State.reports.find(r => r.year === newY)) {
+                        State.reports.push({ year: newY, indicators: empty });
+                        addedCount++;
+                    }
+                }
             } else {
                 const indicators = this.emptyIndicators();
                 Object.assign(indicators, extracted);
@@ -730,14 +760,16 @@ const ReportModule = {
         this.renderIndicatorForm();
         this.updateAll();
 
-        if (addedCount > 0 || extractedTotal > 0) {
-            const msg = [];
-            if (addedCount > 0) msg.push(`新增${addedCount}份报告`);
-            if (extractedTotal > 0) msg.push(`自动识别${extractedTotal}项指标`);
+        const msg = [];
+        if (addedCount > 0) msg.push(`新增${addedCount}份`);
+        if (mergedCount > 0) msg.push(`合并${mergedCount}份`);
+        if (overwrittenCount > 0) msg.push(`覆盖${overwrittenCount}份`);
+        if (extractedTotal > 0) msg.push(`识别${extractedTotal}项指标`);
+        if (msg.length) {
             if (extractedTotal < 12 * files.length) msg.push('其余请手动补填');
             showToast(msg.join('，'), 'success', 3600);
         } else {
-            showToast('已添加报告，请手动填写指标数据', 'info');
+            showToast('已处理，请手动填写指标数据', 'info');
         }
     },
 
@@ -802,11 +834,12 @@ const ReportModule = {
             const val = report.indicators[r.key];
             const status = this.getIndicatorStatus(val, r);
             return `
-                <div class="ind-group ${status.cls}" data-key="${r.key}">
+                <div class="ind-group ${status.cls}" data-key="${r.key}" style="cursor:pointer;transition:transform .15s,box-shadow .15s" title="点击查看该指标历年变化趋势">
                     <div class="ind-head">
                         <div class="ind-name">
                             <span class="ind-color-dot" style="background:${r.color}"></span>
                             ${r.name}
+                            <span style="font-size:11px;color:#94A3B8;margin-left:6px">🔍追踪</span>
                         </div>
                         <span class="ind-unit">${r.unit}</span>
                     </div>
@@ -815,12 +848,27 @@ const ReportModule = {
                         <input type="number" step="any" 
                             data-key="${r.key}" 
                             placeholder="请输入数值"
-                            value="${val == null ? '' : val}">
-                        <span class="ind-status ${status.type}">${status.txt}</span>
+                            value="${val == null ? '' : val}"
+                            onclick="event.stopPropagation()">
+                        <span class="ind-status ${status.type}" onclick="event.stopPropagation()">${status.txt}</span>
                     </div>
                 </div>
             `;
         }).join('');
+
+        $$('.ind-group', grid).forEach(g => {
+            g.addEventListener('click', () => {
+                TrackerModal.open(g.dataset.key);
+            });
+            g.addEventListener('mouseenter', () => {
+                g.style.transform = 'translateY(-2px)';
+                g.style.boxShadow = '0 6px 20px rgba(16,185,129,0.15)';
+            });
+            g.addEventListener('mouseleave', () => {
+                g.style.transform = '';
+                g.style.boxShadow = '';
+            });
+        });
 
         $$('input', grid).forEach(inp => {
             inp.addEventListener('input', e => {
@@ -897,9 +945,9 @@ const ReportModule = {
             const dir = val > rule.maxNormal ? '偏高' : '偏低';
             const severe = status.level?.includes('严重');
             return `
-                <div class="abn-item">
+                <div class="abn-item" data-key="${rule.key}" style="cursor:pointer" title="点击追踪该指标历年变化">
                     <div class="abn-head">
-                        <div class="abn-name">${rule.name}</div>
+                        <div class="abn-name">${rule.name} <span style="font-size:11px;color:#94A3B8">🔍追踪</span></div>
                         <span class="abn-level ${severe ? '' : 'mild'}">${dir}</span>
                     </div>
                     <div class="abn-val">
@@ -909,6 +957,13 @@ const ReportModule = {
                 </div>
             `;
         }).join('');
+
+        $$('.abn-item', list).forEach(it => {
+            it.onclick = () => TrackerModal.open(it.dataset.key);
+            it.style.transition = 'transform .15s, box-shadow .15s';
+            it.addEventListener('mouseenter', () => { it.style.transform = 'translateX(4px)'; });
+            it.addEventListener('mouseleave', () => { it.style.transform = ''; });
+        });
     },
 
     renderAdvice() {
@@ -971,6 +1026,42 @@ const ReportModule = {
         if (downs.length) msgs.push(`以下指标呈<b>逐年降低</b>趋势：<b>${downs.join('、')}</b>。`);
         if (!msgs.length) msgs.push('您的各项指标整体波动不大，保持稳定状态，请继续保持。');
         return msgs.join(' ');
+    },
+
+    generateAdvice() {
+        const latest = this.getLatestReport();
+        const items = [];
+        if (!latest) return items;
+
+        const abnormalCnt = INDICATOR_RULES.filter(r => {
+            const v = latest.indicators[r.key];
+            return this.getIndicatorStatus(v, r).cls === 'abnormal';
+        }).length;
+
+        INDICATOR_RULES.forEach(r => {
+            const v = latest.indicators[r.key];
+            if (v == null || isNaN(v)) return;
+            const st = this.getIndicatorStatus(v, r);
+            if (st.cls !== 'abnormal') return;
+            const isHigh = v > r.maxNormal;
+            items.push({
+                title: `${r.name}${isHigh ? '偏高' : '偏低'}健康建议`,
+                detail: isHigh ? r.highAdvice : r.lowAdvice
+            });
+        });
+
+        if (!items.length && abnormalCnt === 0 && State.reports.length >= 1) {
+            items.push({
+                title: '整体健康评价',
+                detail: '您本次体检指标均在正常范围内，健康状况良好！建议继续保持：规律作息(23点前入睡)、均衡饮食(每餐15种食物)、每周150分钟中等强度有氧运动、每年定期体检。'
+            });
+        }
+
+        if (State.reports.length >= 2) {
+            const trendMsg = this.getOverallTrendMsg().replace(/<b>/g, '').replace(/<\/b>/g, '');
+            if (trendMsg) items.unshift({ title: '多年趋势综合提示', detail: trendMsg });
+        }
+        return items;
     },
 
     analyzeTrend(key) {
@@ -1189,6 +1280,726 @@ const ReportModule = {
 };
 
 /* ======================================================================
+ *  4.5 PDF Canvas Utils - 中文文字版PDF生成核心工具
+ * ====================================================================== */
+
+const PDFCanvas = {
+    PAGE_W: 595,
+    PAGE_H: 842,
+    MARGIN_L: 40,
+    MARGIN_R: 555,
+    MARGIN_T: 50,
+    MARGIN_B: 792,
+    LINE_H: 16,
+
+    createPage(bgColor = '#F8FAF9') {
+        const canvas = document.createElement('canvas');
+        canvas.width = this.PAGE_W * 2;
+        canvas.height = this.PAGE_H * 2;
+        const ctx = canvas.getContext('2d');
+        ctx.scale(2, 2);
+        ctx.fillStyle = bgColor;
+        ctx.fillRect(0, 0, this.PAGE_W, this.PAGE_H);
+        return { canvas, ctx, y: this.MARGIN_T, pageNum: 1 };
+    },
+
+    _newPage(state, bgColor = '#F8FAF9') {
+        const pages = state.pages;
+        pages.push(state.canvas);
+        const canvas = document.createElement('canvas');
+        canvas.width = this.PAGE_W * 2;
+        canvas.height = this.PAGE_H * 2;
+        const ctx = canvas.getContext('2d');
+        ctx.scale(2, 2);
+        ctx.fillStyle = bgColor;
+        ctx.fillRect(0, 0, this.PAGE_W, this.PAGE_H);
+        state.canvas = canvas;
+        state.ctx = ctx;
+        state.y = this.MARGIN_T;
+        state.pageNum++;
+        this._drawFooter(state);
+    },
+
+    _drawFooter(state) {
+        const { ctx } = state;
+        ctx.fillStyle = '#94A3B8';
+        ctx.font = '9px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(`© 康源体检中心 · 本报告仅供参考，具体诊疗请遵医嘱`, this.MARGIN_L, this.MARGIN_B + 10);
+        ctx.textAlign = 'right';
+        ctx.fillText(`第 ${state.pageNum} 页`, this.MARGIN_R, this.MARGIN_B + 10);
+        ctx.textAlign = 'left';
+    },
+
+    _checkPage(state, needH, bgColor = '#F8FAF9') {
+        if (state.y + needH > this.MARGIN_B) this._newPage(state, bgColor);
+    },
+
+    writeTitle(state, text, size = 22, color = '#10B981') {
+        this._checkPage(state, 36);
+        const { ctx } = state;
+        ctx.fillStyle = color;
+        ctx.font = `bold ${size}px "Noto Serif SC", "Songti SC", "SimSun", serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText(text, this.PAGE_W / 2, state.y);
+        ctx.textAlign = 'left';
+        state.y += size + 10;
+    },
+
+    writeSubtitle(state, text, size = 11, color = '#64748B') {
+        this._checkPage(state, 20);
+        const { ctx } = state;
+        ctx.fillStyle = color;
+        ctx.font = `${size}px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText(text, this.PAGE_W / 2, state.y);
+        ctx.textAlign = 'left';
+        state.y += size + 14;
+    },
+
+    writeSectionHeader(state, text, barColor = '#10B981', bgColor = '#ECFDF5', textColor = '#065F46') {
+        this._checkPage(state, 32);
+        const { ctx } = state;
+        const x = this.MARGIN_L;
+        const w = this.MARGIN_R - this.MARGIN_L;
+        ctx.fillStyle = bgColor;
+        this._roundRect(ctx, x, state.y, w, 26, 4, true, false);
+        ctx.fillStyle = barColor;
+        ctx.fillRect(x, state.y, 4, 26);
+        ctx.fillStyle = textColor;
+        ctx.font = `bold 12px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif`;
+        ctx.fillText(text, x + 14, state.y + 17);
+        state.y += 38;
+    },
+
+    writeText(state, text, size = 11, color = '#334155', bold = false, indent = 0) {
+        this._checkPage(state, this.LINE_H);
+        const { ctx } = state;
+        ctx.fillStyle = color;
+        const weight = bold ? 'bold ' : '';
+        ctx.font = `${weight}${size}px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif`;
+        const lines = this._wrapText(ctx, text, this.MARGIN_R - this.MARGIN_L - indent);
+        lines.forEach(line => {
+            this._checkPage(state, this.LINE_H);
+            ctx.fillText(line, this.MARGIN_L + indent, state.y);
+            state.y += this.LINE_H;
+        });
+    },
+
+    writeKeyValueRow(state, label, value, labelColor = '#475569', valueColor = '#0F172A', highlight = false) {
+        this._checkPage(state, this.LINE_H);
+        const { ctx } = state;
+        ctx.fillStyle = labelColor;
+        ctx.font = `11px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif`;
+        ctx.fillText(label, this.MARGIN_L, state.y);
+        ctx.fillStyle = highlight ? '#DC2626' : valueColor;
+        ctx.font = `${highlight ? 'bold ' : ''}11px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif`;
+        ctx.textAlign = 'right';
+        const valLines = this._wrapText(ctx, value, this.MARGIN_R - this.MARGIN_L - 130);
+        valLines.forEach((line, i) => {
+            if (i > 0) { state.y += this.LINE_H; this._checkPage(state, this.LINE_H); }
+            ctx.fillText(line, this.MARGIN_R, state.y);
+        });
+        ctx.textAlign = 'left';
+        state.y += this.LINE_H;
+    },
+
+    writeTable(state, headers, rows, options = {}) {
+        const colWidths = options.colWidths || headers.map(() => Math.floor((this.MARGIN_R - this.MARGIN_L) / headers.length));
+        const rowH = options.rowH || 24;
+        this._checkPage(state, rowH + 10);
+
+        const { ctx } = state;
+        const startX = this.MARGIN_L;
+        let cursorY = state.y;
+
+        ctx.fillStyle = '#F1F5F9';
+        this._roundRect(ctx, startX, cursorY, this.MARGIN_R - startX, rowH, 3, true, false);
+        ctx.fillStyle = '#0F172A';
+        ctx.font = `bold 10px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif`;
+        let cx = startX + 8;
+        headers.forEach((h, i) => {
+            ctx.fillText(h, cx, cursorY + 15);
+            cx += colWidths[i];
+        });
+        cursorY += rowH;
+
+        rows.forEach((row, rIdx) => {
+            if (cursorY + rowH > this.MARGIN_B) {
+                state.y = cursorY;
+                this._newPage(state);
+                cursorY = state.y;
+            }
+            if (rIdx % 2 === 1) {
+                ctx.fillStyle = '#FAFAFA';
+                ctx.fillRect(startX, cursorY, this.MARGIN_R - startX, rowH);
+            }
+            cx = startX + 8;
+            row.forEach((cell, i) => {
+                const isHighlight = typeof cell === 'object' && cell.highlight;
+                const text = typeof cell === 'object' ? cell.text : cell;
+                ctx.fillStyle = isHighlight ? '#DC2626' : '#0F172A';
+                ctx.font = `${isHighlight ? 'bold ' : ''}10px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif`;
+                ctx.fillText(String(text).substring(0, 20), cx, cursorY + 15);
+                cx += colWidths[i];
+            });
+            cursorY += rowH;
+        });
+        state.y = cursorY + 14;
+    },
+
+    writeBadgeRow(state, items) {
+        this._checkPage(state, 30);
+        const { ctx } = state;
+        let x = this.MARGIN_L;
+        items.forEach(item => {
+            const text = typeof item === 'string' ? item : item.text;
+            const bg = typeof item === 'string' ? '#E0F2FE' : (item.bg || '#E0F2FE');
+            const color = typeof item === 'string' ? '#0369A1' : (item.color || '#0369A1');
+            ctx.font = `10px "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif`;
+            const metrics = ctx.measureText(text);
+            const w = metrics.width + 16;
+            if (x + w > this.MARGIN_R) { x = this.MARGIN_L; state.y += 24; this._checkPage(state, 24); }
+            ctx.fillStyle = bg;
+            this._roundRect(ctx, x, state.y - 13, w, 20, 10, true, false);
+            ctx.fillStyle = color;
+            ctx.fillText(text, x + 8, state.y + 1);
+            x += w + 8;
+        });
+        state.y += 18;
+    },
+
+    writeDivider(state, color = '#E2E8F0') {
+        this._checkPage(state, 14);
+        const { ctx } = state;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.moveTo(this.MARGIN_L, state.y);
+        ctx.lineTo(this.MARGIN_R, state.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        state.y += 14;
+    },
+
+    _wrapText(ctx, text, maxWidth) {
+        const lines = [];
+        let line = '';
+        for (const ch of text) {
+            const testLine = line + ch;
+            if (ctx.measureText(testLine).width > maxWidth && line.length > 0) {
+                lines.push(line);
+                line = ch;
+            } else {
+                line = testLine;
+            }
+        }
+        if (line) lines.push(line);
+        return lines;
+    },
+
+    _roundRect(ctx, x, y, w, h, r, fill, stroke) {
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + w - r, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+        ctx.lineTo(x + w, y + h - r);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        ctx.lineTo(x + r, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
+        ctx.closePath();
+        if (fill) ctx.fill();
+        if (stroke) ctx.stroke();
+    },
+
+    buildPDF(filename) {
+        const pages = this._pages;
+        if (!pages || !pages.length) return;
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
+        pages.forEach((c, i) => {
+            if (i > 0) pdf.addPage();
+            const data = c.toDataURL('image/jpeg', 0.95);
+            pdf.addImage(data, 'JPEG', 0, 0, this.PAGE_W, this.PAGE_H);
+        });
+        pdf.save(filename);
+    },
+
+    startDocument(bgColor = '#F8FAF9') {
+        const first = this.createPage(bgColor);
+        this._pages = [];
+        this._state = {
+            canvas: first.canvas,
+            ctx: first.ctx,
+            y: first.y,
+            pageNum: 1,
+            pages: this._pages
+        };
+        this._drawFooter(this._state);
+        return this._state;
+    },
+
+    finalize(filename) {
+        this._pages.push(this._state.canvas);
+        this.buildPDF(filename);
+    }
+};
+
+/* ======================================================================
+ *  4.6 预算推荐模块
+ * ====================================================================== */
+
+const BudgetModule = {
+    budgetItems: [],
+    decisions: [],
+
+    init() {
+        $('#budget-calc-btn').onclick = () => this.calculate();
+        $('#budget-apply-btn').onclick = () => this.apply();
+        $('#budget-reset-btn').onclick = () => this.reset();
+    },
+
+    calculate() {
+        const input = $('#budget-input');
+        const budget = parseInt(input.value);
+        if (!budget || budget < 100) { showToast('请输入有效的预算金额（≥100）', 'error'); return; }
+
+        const decisions = [];
+        const mandatoryCats = ['检验'];
+        const preferredCats = ['影像', '功能'];
+        const bonusCats = ['专科'];
+
+        let currentIds = [...State.selectedItemIds];
+        let currentPrice = currentIds.reduce((s, id) => s + (getItem(id)?.price || 0), 0);
+
+        const selected = new Set(currentIds);
+        const ranked = EXAM_ITEMS
+            .map(it => ({
+                ...it,
+                score: this._calcScore(it)
+            }))
+            .sort((a, b) => b.score - a.score);
+
+        const kept = [];
+        const dropped = [];
+        const added = [];
+
+        if (currentPrice > budget) {
+            decisions.push({ type: 'info', icon: 'info', title: `当前已选¥${currentPrice}超过预算¥${budget}`, reason: `需精简约 ¥${currentPrice - budget}` });
+            const toRemove = ranked.slice().reverse();
+            for (const it of toRemove) {
+                if (currentPrice <= budget) break;
+                if (!selected.has(it.id)) continue;
+                if (mandatoryCats.includes(it.category)) continue;
+                selected.delete(it.id);
+                currentPrice -= it.price;
+                dropped.push({ ...it, reason: this._dropReason(it) });
+            }
+        } else {
+            decisions.push({ type: 'info', icon: 'info', title: `当前已选¥${currentPrice}，剩余预算¥${budget - currentPrice}`, reason: '优先补充高性价比检查' });
+        }
+
+        for (const it of ranked) {
+            if (currentPrice + it.price > budget) continue;
+            if (selected.has(it.id)) {
+                if (!dropped.find(d => d.id === it.id)) {
+                    kept.push({ ...it, reason: this._keepReason(it) });
+                }
+                continue;
+            }
+            selected.add(it.id);
+            currentPrice += it.price;
+            added.push({ ...it, reason: this._addReason(it) });
+            if (added.length >= 15) break;
+        }
+
+        kept.forEach(it => decisions.push({ type: 'keep', icon: '✓', title: `保留 ${it.name}`, reason: it.reason + ` (¥${it.price})` }));
+        dropped.forEach(it => decisions.push({ type: 'drop', icon: '✗', title: `暂减 ${it.name}`, reason: it.reason + ` (省¥${it.price})` }));
+        added.forEach(it => decisions.push({ type: 'keep', icon: '+', title: `补充 ${it.name}${it.isHot ? ' 🔥热门' : ''}`, reason: it.reason + ` (¥${it.price})` }));
+
+        this.budgetItems = [...selected];
+        this.decisions = decisions;
+        this._render(budget, currentPrice, kept.length + added.length, dropped.length);
+    },
+
+    _calcScore(it) {
+        let s = it.price > 0 ? 100 / it.price : 0;
+        if (it.isHot) s += 30;
+        if (['检验'].includes(it.category)) s += 25;
+        if (['影像'].includes(it.category)) s += 15;
+        if (State.user.gender === 'male' && ['PSA', 'PROSTATE_B'].includes(it.id)) s += 50;
+        if (State.user.gender === 'female' && ['MAMMOGRAPHY', 'BREAST_B', 'TCT', 'HPV'].includes(it.id)) s += 50;
+        if (State.user.age >= 40 && ['TUMOR_5', 'BMD', 'TCD'].includes(it.id)) s += 40;
+        if (State.user.age >= 50 && ['HEAD_CT', 'GASTROSCOPY'].includes(it.id)) s += 45;
+        return s;
+    },
+
+    _keepReason(it) {
+        if (['检验'].includes(it.category)) return '基础检验必做项目';
+        if (it.isHot) return '临床推荐的热门筛查';
+        if (State.user.age >= 40 && ['PSA', 'MAMMOGRAPHY'].includes(it.id)) return '您年龄段重点推荐';
+        return '常规健康筛查项目';
+    },
+
+    _dropReason(it) {
+        if (['专科'].includes(it.category)) return '可根据需要后续加项';
+        if (it.price > 300) return '高值项目，优先保留基础检查';
+        return '预算有限时可暂缓';
+    },
+
+    _addReason(it) {
+        if (State.user.gender === 'male' && it.id === 'PSA') return '男性40岁以上专项';
+        if (State.user.gender === 'female' && ['MAMMOGRAPHY', 'TCT'].includes(it.id)) return '女性专项筛查推荐';
+        if (['检验'].includes(it.category)) return '补充实验室检查维度';
+        if (['影像'].includes(it.category)) return '补充影像学检查维度';
+        if (it.isHot) return '高性价比热门项目';
+        return '综合健康评估补充';
+    },
+
+    _render(budget, finalPrice, keptCount, droppedCount) {
+        const result = $('#budget-result');
+        const usage = (finalPrice / budget * 100).toFixed(1);
+
+        $('#budget-summary').innerHTML = `
+            <div class="budget-stat">
+                <div class="budget-stat-label">预算上限</div>
+                <div class="budget-stat-value">¥${budget.toLocaleString()}</div>
+            </div>
+            <div class="budget-stat">
+                <div class="budget-stat-label">方案总价</div>
+                <div class="budget-stat-value ${finalPrice > budget ? 'danger' : 'success'}">¥${finalPrice.toLocaleString()}</div>
+            </div>
+            <div class="budget-stat">
+                <div class="budget-stat-label">预算使用率</div>
+                <div class="budget-stat-value ${finalPrice > budget ? 'danger' : ''}">${usage}%</div>
+            </div>
+        `;
+
+        $('#budget-decisions').innerHTML = this.decisions.map(d => `
+            <div class="decision-item">
+                <div class="decision-icon ${d.type}">${d.icon}</div>
+                <div class="decision-text">
+                    <strong>${d.title}</strong>
+                    <span class="reason">${d.reason}</span>
+                </div>
+            </div>
+        `).join('');
+
+        result.hidden = false;
+        showToast(`生成推荐方案：${keptCount}项保留 · ${droppedCount}项精简 · 共${this.budgetItems.length}项`, 'success', 3000);
+    },
+
+    apply() {
+        if (!this.budgetItems.length) return;
+        State.selectedItemIds = this.budgetItems;
+        State.savePackage();
+        PackageModule.renderPackages();
+        PackageModule.renderItems();
+        PackageModule.renderSelectedList();
+        PackageModule.renderPrice();
+        PackageModule.renderRecommend();
+        showToast(`已应用预算方案：共${this.budgetItems.length}项`, 'success');
+    },
+
+    reset() {
+        $('#budget-result').hidden = true;
+        $('#budget-input').value = '';
+        this.budgetItems = [];
+        this.decisions = [];
+    }
+};
+
+/* ======================================================================
+ *  4.7 报告冲突处理模块
+ * ====================================================================== */
+
+const ConflictModal = {
+    pending: null,
+    applyAll: null,
+    resolveCallbacks: [],
+
+    init() {
+        $('#conflict-close').onclick = () => this.cancel();
+        $('#conflict-overwrite').onclick = () => this.resolve('overwrite');
+        $('#conflict-merge').onclick = () => this.resolve('merge');
+        $('#conflict-newyear').onclick = () => this.resolve('newyear');
+        $('#conflict-modal').onclick = (e) => { if (e.target.id === 'conflict-modal') this.cancel(); };
+    },
+
+    async show({ year, existingIndicators, newIndicators, altYear }) {
+        if (this.applyAll) return this.applyAll;
+
+        return new Promise(resolve => {
+            this.resolveCallbacks.push(resolve);
+            if (this.pending) return;
+            this._showModal(year, existingIndicators, newIndicators, altYear);
+        });
+    },
+
+    _showModal(year, existingIndicators, newIndicators, altYear) {
+        this.pending = { year, existingIndicators, newIndicators, altYear };
+        $('#conflict-year').textContent = year;
+        $('#conflict-alt-year').textContent = altYear;
+
+        $('#conflict-existing').innerHTML = INDICATOR_RULES.map(r => {
+            const v = existingIndicators[r.key];
+            const has = v != null && !isNaN(v);
+            return `<div class="conflict-row ${has ? 'has-val' : 'no-val'}">
+                <span class="conflict-ind-name">${r.name}</span>
+                <span class="conflict-ind-value">${has ? v + r.unit : '—'}</span>
+            </div>`;
+        }).join('');
+
+        $('#conflict-new').innerHTML = INDICATOR_RULES.map(r => {
+            const v = newIndicators[r.key];
+            const has = v != null && !isNaN(v);
+            const existing = existingIndicators[r.key];
+            const existingHas = existing != null && !isNaN(existing);
+            let cls = has ? (existingHas ? 'updated' : 'added') : 'no-val';
+            return `<div class="conflict-row ${cls}">
+                <span class="conflict-ind-name">${r.name}</span>
+                <span class="conflict-ind-value">${has ? v + r.unit : '—'}</span>
+            </div>`;
+        }).join('');
+
+        $('#conflict-apply-all').checked = false;
+        $('#conflict-modal').hidden = false;
+    },
+
+    resolve(choice) {
+        if ($('#conflict-apply-all').checked) this.applyAll = choice;
+        $('#conflict-modal').hidden = true;
+        const pending = this.pending;
+        this.pending = null;
+        const result = { choice, altYear: pending.altYear };
+        this.resolveCallbacks.forEach(cb => cb(result));
+        this.resolveCallbacks = [];
+    },
+
+    cancel() {
+        $('#conflict-modal').hidden = true;
+        this.pending = null;
+        const result = { choice: 'skip' };
+        this.resolveCallbacks.forEach(cb => cb(result));
+        this.resolveCallbacks = [];
+    },
+
+    resetApplyAll() { this.applyAll = null; }
+};
+
+/* ======================================================================
+ *  4.8 异常指标追踪模块
+ * ====================================================================== */
+
+const TrackerModal = {
+    chart: null,
+    currentKey: null,
+
+    init() {
+        $('#tracker-close').onclick = () => this.close();
+        $('#tracker-modal').onclick = (e) => { if (e.target.id === 'tracker-modal') this.close(); };
+    },
+
+    async open(key) {
+        this.currentKey = key;
+        const rule = getRule(key);
+        if (!rule) return;
+
+        const sorted = State.reports.slice().sort((a, b) => a.year - b.year);
+        const dataPoints = sorted.map(r => ({
+            year: r.year,
+            value: r.indicators[key]
+        })).filter(d => d.value != null && !isNaN(d.value));
+
+        if (dataPoints.length < 1) { showToast('该指标尚无数据', 'error'); return; }
+
+        const values = dataPoints.map(d => d.value);
+        const maxV = Math.max(...values);
+        const minV = Math.min(...values);
+        const avgV = (values.reduce((a, b) => a + b, 0) / values.length);
+
+        let highCount = 0, lowCount = 0;
+        const statuses = dataPoints.map(d => {
+            const st = ReportModule.getIndicatorStatus(d.value, rule);
+            if (st.type === 'high') highCount++;
+            if (st.type === 'low') lowCount++;
+            return { ...d, status: st };
+        });
+
+        const latest = statuses[statuses.length - 1];
+        const trend = dataPoints.length >= 3 ? ReportModule.analyzeTrend(key) : (dataPoints.length === 2 ? (values[1] > values[0] ? 'up' : (values[1] < values[0] ? 'down' : 'stable')) : null);
+        const trendMap = { up: '📈 偏高趋势', down: '📉 偏低趋势', stable: '➡️ 基本稳定' };
+
+        $('#tracker-title').innerHTML = `📊 ${rule.name} · 历年追踪`;
+
+        const statusCls = latest.status.type === 'normal' ? 'normal' : (latest.status.type === 'high' ? 'high' : 'low');
+        $('#tracker-overview').innerHTML = `
+            <div>
+                <div class="tracker-overview-name">${rule.name}</div>
+                <div class="tracker-overview-sub">追踪 ${dataPoints.length} 年数据 · 单位 ${rule.unit}</div>
+            </div>
+            <div class="tracker-range-box">
+                <div class="tracker-range-label">正常范围</div>
+                <div class="tracker-range-value">${rule.minNormal} ~ ${rule.maxNormal} ${rule.unit}</div>
+            </div>
+            <div class="tracker-overview-latest">
+                <div class="tracker-latest-label">${latest.year}年最新值</div>
+                <div class="tracker-latest-value ${statusCls}">${latest.value}<small>${rule.unit}</small></div>
+            </div>
+        `;
+
+        document.getElementById('tracker-max').textContent = `${maxV}${rule.unit}`;
+        document.getElementById('tracker-min').textContent = `${minV}${rule.unit}`;
+        document.getElementById('tracker-avg').textContent = `${avgV.toFixed(1)}${rule.unit}`;
+        document.getElementById('tracker-highcount').textContent = `${highCount}次`;
+        document.getElementById('tracker-lowcount').textContent = `${lowCount}次`;
+        document.getElementById('tracker-trend').textContent = trend ? trendMap[trend] : '数据不足';
+        document.getElementById('tracker-trend').style.color = trend === 'up' ? '#DC2626' : (trend === 'down' ? '#2563EB' : '#10B981');
+
+        $('#tracker-table').innerHTML = `
+            <thead>
+                <tr>
+                    <th>年份</th>
+                    <th>数值</th>
+                    <th>正常范围</th>
+                    <th>偏离情况</th>
+                    <th>状态</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${statuses.map(s => {
+                    const dev = s.value > rule.maxNormal ? `+${(s.value - rule.maxNormal).toFixed(1)}${rule.unit}`
+                        : (s.value < rule.minNormal ? `-${(rule.minNormal - s.value).toFixed(1)}${rule.unit}` : '—');
+                    const cls = s.status.type === 'normal' ? 'normal' : s.status.type;
+                    return `<tr>
+                        <td><strong>${s.year}年</strong></td>
+                        <td style="color:${s.status.cls === 'abnormal' ? '#DC2626' : '#0F172A'};font-weight:${s.status.cls === 'abnormal' ? 700 : 500}">${s.value}${rule.unit}</td>
+                        <td style="color:#64748B">${rule.minNormal}~${rule.maxNormal}</td>
+                        <td style="color:${dev === '—' ? '#94A3B8' : (s.status.type === 'high' ? '#DC2626' : '#D97706')}">${dev}</td>
+                        <td><span class="tracker-status-chip ${cls}">${s.status.txt}</span></td>
+                    </tr>`;
+                }).join('')}
+            </tbody>
+        `;
+
+        const adviceList = [];
+        if (trend === 'up') adviceList.push({ type: 'trend', text: `⚠️ 近年${rule.name}呈逐年升高趋势，3年变化约 ${((values[values.length - 1] - values[0]) / values[0] * 100).toFixed(1)}%，请重点关注` });
+        if (trend === 'down') adviceList.push({ type: 'trend', text: `📉 ${rule.name}呈逐年降低趋势，请咨询医生是否需要调整` });
+        if (highCount >= 2) adviceList.push({ type: 'warn', text: `近${dataPoints.length}年有${highCount}次超出正常高值，建议${rule.highAdvice}` });
+        if (lowCount >= 2) adviceList.push({ type: 'warn', text: `近${dataPoints.length}年有${lowCount}次低于正常值，建议${rule.lowAdvice}` });
+        if (latest.status.type === 'high') adviceList.push({ type: 'danger', text: `🔴 ${latest.year}年最新值偏高：${rule.highAdvice}` });
+        if (latest.status.type === 'low') adviceList.push({ type: 'danger', text: `🟠 ${latest.year}年最新值偏低：${rule.lowAdvice}` });
+        if (statuses.every(s => s.status.type === 'normal')) adviceList.push({ type: 'success', text: `✅ 所有年份均在正常范围内，继续保持健康的生活方式！` });
+        adviceList.push({ type: 'info', text: `💡 建议每年定期追踪此指标，保持连续${Math.max(3, dataPoints.length + 1)}年以上数据更有参考价值` });
+
+        $('#tracker-advice').innerHTML = `
+            <div class="tracker-advice-title">💡 综合健康建议</div>
+            <div class="tracker-advice-content">
+                ${adviceList.map(a => `<div class="advice-item">${a.text}</div>`).join('')}
+            </div>
+        `;
+
+        $('#tracker-modal').hidden = false;
+        setTimeout(() => this._renderChart(key, rule, sorted), 60);
+    },
+
+    _renderChart(key, rule, sorted) {
+        const ctx = $('#tracker-chart');
+        if (this.chart) { this.chart.destroy(); }
+        const labels = sorted.map(r => r.year + '年');
+        const data = sorted.map(r => r.indicators[key]);
+        const validData = data.filter(v => v != null && !isNaN(v));
+
+        this.chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    {
+                        type: 'line',
+                        label: rule.name,
+                        data,
+                        borderColor: rule.color,
+                        backgroundColor: rule.color + '22',
+                        borderWidth: 3,
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 5,
+                        pointBackgroundColor: data.map(v => {
+                            const st = ReportModule.getIndicatorStatus(v, rule);
+                            return st.type === 'normal' ? rule.color : (st.type === 'high' ? '#DC2626' : '#F59E0B');
+                        }),
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 2,
+                        pointHoverRadius: 7
+                    },
+                    {
+                        type: 'line',
+                        label: '正常上限',
+                        data: labels.map(() => rule.maxNormal),
+                        borderColor: '#DC2626',
+                        borderWidth: 1.5,
+                        borderDash: [6, 4],
+                        pointRadius: 0,
+                        fill: false,
+                        tension: 0
+                    },
+                    {
+                        type: 'line',
+                        label: '正常下限',
+                        data: labels.map(() => rule.minNormal),
+                        borderColor: '#F59E0B',
+                        borderWidth: 1.5,
+                        borderDash: [6, 4],
+                        pointRadius: 0,
+                        fill: false,
+                        tension: 0
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
+                    tooltip: {
+                        backgroundColor: '#0F172A',
+                        titleFont: { size: 13, weight: 'bold' },
+                        bodyFont: { size: 12 },
+                        callbacks: {
+                            label: (c) => {
+                                if (c.datasetIndex === 0) {
+                                    const st = ReportModule.getIndicatorStatus(c.parsed.y, rule);
+                                    return `${rule.name}: ${c.parsed.y}${rule.unit} · ${st.txt}`;
+                                }
+                                return c.dataset.label + ': ' + c.parsed.y + rule.unit;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: false,
+                        grid: { color: '#F1F5F9' },
+                        ticks: { font: { size: 10 }, callback: v => v + rule.unit }
+                    },
+                    x: { grid: { display: false }, ticks: { font: { size: 11 } } }
+                },
+                animation: { duration: 700 }
+            }
+        });
+    },
+
+    close() {
+        $('#tracker-modal').hidden = true;
+        if (this.chart) { this.chart.destroy(); this.chart = null; }
+    }
+};
+
+/* ======================================================================
  *  5. 导出模块
  * ====================================================================== */
 
@@ -1230,351 +2041,183 @@ const ExportModule = {
 
     async exportPackagePDF() {
         if (!State.selectedItemIds.length) { showToast('请先选择项目', 'error'); return; }
-        showToast('正在生成PDF，中文内容将以高清图片形式呈现...', 'info', 4000);
+        showToast('正在生成中文报价单PDF...', 'info', 3000);
 
         try {
-            const targetNode = $('.package-layout');
-            const canvas = await html2canvas(targetNode, {
-                scale: 2, useCORS: true, backgroundColor: '#F8FAF9',
-                logging: false,
-                windowWidth: targetNode.scrollWidth,
-                windowHeight: targetNode.scrollHeight
-            });
+            const items = State.selectedItemIds.map(id => getItem(id)).filter(Boolean);
+            const { original, total, saved, label } = PackageModule.calcPrice();
+            const gender = State.user.gender === 'male' ? '男' : '女';
 
-            const { jsPDF } = window.jspdf;
-            const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
-            const pageW = pdf.internal.pageSize.getWidth();
-            const pageH = pdf.internal.pageSize.getHeight();
+            const s = PDFCanvas.startDocument('#F8FAF9');
+            PDFCanvas.writeTitle(s, '康源体检中心 · 套餐报价单');
+            PDFCanvas.writeSubtitle(s, `年龄 ${State.user.age} 岁  |  ${gender}  |  出具日期 ${new Date().toLocaleDateString('zh-CN')}`);
 
-            pdf.setFillColor(248, 250, 249);
-            pdf.rect(0, 0, pageW, pageH, 'F');
+            PDFCanvas.writeSectionHeader(s, '一、套餐明细', '#10B981', '#ECFDF5', '#065F46');
 
-            const imgW = pageW - 20;
-            const imgH = canvas.height * imgW / canvas.width;
-            const maxH = pageH - 30;
-            let y = 15;
-            let remainingH = imgH;
-            let offsetY = 0;
-            let pageNum = 1;
+            const headers = ['序号', '项目名称', '分类', '单价(¥)', '小计(¥)'];
+            const colWidths = [45, 230, 100, 70, 70];
+            const rows = items.map((it, i) => [
+                String(i + 1), it.name, it.category, String(it.price), String(it.price)
+            ]);
+            PDFCanvas.writeTable(s, headers, rows, { colWidths, rowH: 22 });
 
-            while (remainingH > 0) {
-                if (pageNum > 1) {
-                    pdf.addPage();
-                    pdf.setFillColor(248, 250, 249);
-                    pdf.rect(0, 0, pageW, pageH, 'F');
-                    y = 15;
-                }
+            PDFCanvas.writeSectionHeader(s, '二、价格汇总', '#F59E0B', '#FFFBEB', '#92400E');
 
-                const sliceH = Math.min(remainingH, maxH);
-                const srcCanvas = document.createElement('canvas');
-                srcCanvas.width = canvas.width;
-                srcCanvas.height = Math.round(sliceH * canvas.width / imgW);
-                const sctx = srcCanvas.getContext('2d');
-                sctx.fillStyle = '#F8FAF9';
-                sctx.fillRect(0, 0, srcCanvas.width, srcCanvas.height);
-                sctx.drawImage(canvas, 0, -offsetY, canvas.width, canvas.height);
+            s.y += 8;
+            PDFCanvas.writeKeyValueRow(s, '原价合计：', `¥ ${original}`);
+            PDFCanvas.writeKeyValueRow(s, `优惠方式（${label}）：`, `- ¥ ${saved}`);
+            PDFCanvas.writeKeyValueRow(s, '优惠后应付：', `¥ ${total}`, '#059669', true);
 
-                const srcData = srcCanvas.toDataURL('image/jpeg', 0.95);
-                const drawH = sliceH;
-                pdf.addImage(srcData, 'JPEG', 10, y, imgW, drawH);
+            PDFCanvas.writeSectionHeader(s, '三、备注说明', '#6366F1', '#EEF2FF', '#3730A3');
+            PDFCanvas.writeText(s, '1. 本报价单有效期为出具日期起30天，逾期价格可能调整；', 11, '#475569');
+            PDFCanvas.writeText(s, '2. 所有检查项目请于检查前一晚10点后禁食禁水，保持空腹；', 11, '#475569');
+            PDFCanvas.writeText(s, '3. 女性请避开生理期进行尿检及妇科相关检查；', 11, '#475569');
+            PDFCanvas.writeText(s, '4. 本报价单仅供参考，最终以体检中心前台确认为准。', 11, '#475569');
 
-                offsetY += srcCanvas.height;
-                if (offsetY >= canvas.height - 1) break;
-                remainingH -= sliceH;
-                pageNum++;
-            }
-
-            pdf.save(`体检套餐报价单_${new Date().toISOString().slice(0, 10)}.pdf`);
-            showToast('报价单PDF已导出，中文完美显示', 'success');
-            return;
+            const filename = `体检套餐报价单_${new Date().toISOString().slice(0, 10)}.pdf`;
+            await PDFCanvas.finalize(filename);
+            showToast('报价单PDF已导出（纯文字中文版）', 'success');
         } catch (e) {
-            console.warn('截图模式失败，降级到文字模式:', e);
+            console.error('报价单PDF生成失败:', e);
+            showToast('PDF生成失败，请重试', 'error');
         }
-
-        this.exportPackagePDFSimple();
     },
 
     exportPackagePDFSimple() {
-        const { jsPDF } = window.jspdf;
-        const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
-        const pageW = 210;
-        const items = State.selectedItemIds.map(id => getItem(id)).filter(Boolean);
-        const { original, total, saved, label } = PackageModule.calcPrice();
-
-        pdf.setFontSize(20); pdf.setTextColor(16, 185, 129); pdf.setFont('helvetica', 'bold');
-        pdf.text('体检套餐报价单', 105, 22, { align: 'center' });
-        pdf.setFontSize(10); pdf.setTextColor(100); pdf.setFont('helvetica', 'normal');
-        pdf.text(`康源体检中心  |  年龄${State.user.age}岁 ${State.user.gender === 'male' ? '男' : '女'}  |  ${new Date().toLocaleDateString('zh-CN')}`, 105, 32, { align: 'center' });
-
-        pdf.setFillColor(241, 245, 249); pdf.roundedRect(14, 40, pageW - 28, 8, 2, 2, 'F');
-        pdf.setFontSize(11); pdf.setTextColor(15); pdf.setFont('helvetica', 'bold');
-        pdf.text('#', 18, 45.5); pdf.text('项目', 24, 45.5); pdf.text('分类', 95, 45.5);
-        pdf.text('单价(¥)', 145, 45.5); pdf.text('小计(¥)', 178, 45.5, { align: 'right' });
-
-        let y = 58;
-        pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10.5);
-        items.forEach((it, i) => {
-            if (y > 260) { pdf.addPage(); y = 20; }
-            if (i % 2 === 1) { pdf.setFillColor(250, 250, 250); pdf.roundedRect(14, y - 6, pageW - 28, 8, 1, 1, 'F'); }
-            pdf.setTextColor(80); pdf.text(String(i + 1), 18, y);
-            pdf.setTextColor(15); pdf.text(it.name.substring(0, 28), 24, y);
-            pdf.setTextColor(80); pdf.text(it.category, 95, y);
-            pdf.text(String(it.price), 145, y);
-            pdf.setTextColor(16, 185, 129); pdf.setFont('helvetica', 'bold');
-            pdf.text(String(it.price), 178, y, { align: 'right' });
-            pdf.setFont('helvetica', 'normal');
-            y += 9;
-        });
-
-        y += 6;
-        pdf.setDrawColor(226, 232, 240); pdf.setLineWidth(0.3); pdf.line(14, y, pageW - 14, y);
-        y += 8;
-        pdf.setFontSize(11);
-        pdf.setTextColor(100); pdf.text(`原价合计:`, 140, y);
-        pdf.setTextColor(150); pdf.setFont('helvetica', 'normal');
-        pdf.text(`¥${original}`, 178, y, { align: 'right' });
-        y += 7;
-        pdf.setTextColor(245, 158, 11); pdf.setFont('helvetica', 'bold');
-        pdf.text(`优惠(${label}):`, 140, y);
-        pdf.setTextColor(245, 158, 11);
-        pdf.text(`-¥${saved}`, 178, y, { align: 'right' });
-        y += 10;
-        pdf.setFillColor(240, 253, 244); pdf.roundedRect(140, y - 7, 56, 14, 3, 3, 'F');
-        pdf.setTextColor(5, 150, 105); pdf.setFontSize(13);
-        pdf.text(`应付:`, 144, y + 2);
-        pdf.setFont('helvetica', 'bold'); pdf.setFontSize(16);
-        pdf.text(`¥${total}`, 190, y + 2, { align: 'right' });
-
-        pdf.save(`体检套餐报价单_${new Date().toISOString().slice(0, 10)}.pdf`);
-        showToast('报价单PDF已导出', 'success');
+        this.exportPackagePDF();
     },
 
     async exportReportPDF() {
         if (!State.reports.length) { showToast('没有报告数据', 'error'); return; }
-        showToast('正在生成对比PDF，中文内容将以高清图片形式呈现...', 'info', 4000);
+        showToast('正在生成中文对比报告PDF...', 'info', 3000);
 
         try {
-            const targetNode = $('#report-panel');
-            const origOverflow = targetNode.style.overflow;
-            const origHeight = targetNode.style.height;
-            targetNode.style.overflow = 'visible';
-            targetNode.style.height = 'auto';
+            const reports = State.reports.slice().sort((a, b) => a.year - b.year);
+            const years = reports.map(r => r.year);
+            const latest = reports[reports.length - 1];
+            const gender = State.user.gender === 'male' ? '男' : '女';
 
-            await new Promise(resolve => setTimeout(resolve, 100));
+            const s = PDFCanvas.startDocument('#F8FAF9');
+            PDFCanvas.writeTitle(s, '历年体检报告对比分析');
+            PDFCanvas.writeSubtitle(s, `康源体检中心  |  年龄 ${State.user.age} 岁 ${gender}  |  对比年份 ${years.join(' / ')}`);
 
-            const canvas = await html2canvas(targetNode, {
-                scale: 2, useCORS: true, backgroundColor: '#F8FAF9',
-                logging: false,
-                windowWidth: targetNode.scrollWidth,
-                windowHeight: targetNode.scrollHeight
+            PDFCanvas.writeSectionHeader(s, '一、最新报告异常预警', '#EF4444', '#FEF2F2', '#991B1B');
+            const abnormals = INDICATOR_RULES.filter(r => {
+                const v = latest.indicators[r.key];
+                return ReportModule.getIndicatorStatus(v, r).cls === 'abnormal';
             });
-
-            targetNode.style.overflow = origOverflow;
-            targetNode.style.height = origHeight;
-
-            const { jsPDF } = window.jspdf;
-            const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
-            const pageW = pdf.internal.pageSize.getWidth();
-            const pageH = pdf.internal.pageSize.getHeight();
-
-            pdf.setFillColor(248, 250, 249);
-            pdf.rect(0, 0, pageW, pageH, 'F');
-
-            const imgW = pageW - 20;
-            const imgH = canvas.height * imgW / canvas.width;
-            const maxH = pageH - 30;
-            let y = 15;
-            let remainingH = imgH;
-            let offsetY = 0;
-            let pageNum = 1;
-
-            while (remainingH > 0) {
-                if (pageNum > 1) {
-                    pdf.addPage();
-                    pdf.setFillColor(248, 250, 249);
-                    pdf.rect(0, 0, pageW, pageH, 'F');
-                    y = 15;
-                }
-
-                const sliceH = Math.min(remainingH, maxH);
-                const srcCanvas = document.createElement('canvas');
-                srcCanvas.width = canvas.width;
-                srcCanvas.height = Math.round(sliceH * canvas.width / imgW);
-                const sctx = srcCanvas.getContext('2d');
-                sctx.fillStyle = '#F8FAF9';
-                sctx.fillRect(0, 0, srcCanvas.width, srcCanvas.height);
-                sctx.drawImage(canvas, 0, -offsetY, canvas.width, canvas.height);
-
-                const srcData = srcCanvas.toDataURL('image/jpeg', 0.95);
-                const drawH = sliceH;
-                pdf.addImage(srcData, 'JPEG', 10, y, imgW, drawH);
-
-                offsetY += srcCanvas.height;
-                if (offsetY >= canvas.height - 1) break;
-                remainingH -= sliceH;
-                pageNum++;
+            if (abnormals.length === 0) {
+                s.y += 8;
+                PDFCanvas.writeText(s, `✓ ${latest.year}年所有指标均在正常范围内，身体状态良好，请继续保持！`, 12, '#059669', true);
+            } else {
+                abnormals.forEach(r => {
+                    const v = latest.indicators[r.key];
+                    if (v == null || isNaN(v)) return;
+                    const isHigh = v > r.maxNormal;
+                    const diff = isHigh ? (v - r.maxNormal) : (r.minNormal - v);
+                    const pct = ((diff / (isHigh ? r.maxNormal : r.minNormal)) * 100).toFixed(1);
+                    s.y += 4;
+                    PDFCanvas.writeBadgeRow(s, [
+                        { text: `${latest.year}年`, color: '#FEE2E2', fg: '#991B1B' },
+                        { text: r.name, color: '#FECACA', fg: '#7F1D1D', bold: true },
+                        { text: `${v} ${r.unit}`, color: '#DC2626', fg: '#FFFFFF', bold: true },
+                        { text: isHigh ? `偏高 +${pct}%` : `偏低 -${pct}%`, color: isHigh ? '#FEF3C7' : '#DBEAFE', fg: isHigh ? '#92400E' : '#1E40AF', bold: true },
+                        { text: `正常范围 ${r.minNormal}~${r.maxNormal} ${r.unit}`, color: '#F1F5F9', fg: '#64748B' }
+                    ]);
+                    s.y += 4;
+                    PDFCanvas.writeText(s, `建议：${isHigh ? r.highAdvice : r.lowAdvice}`, 11, '#78350F', false, 20);
+                    s.y += 4;
+                });
             }
 
-            const years = State.reports.slice().sort((a, b) => a.year - b.year).map(r => r.year);
-            pdf.save(`体检报告对比_${years.join('-')}.pdf`);
-            showToast('对比PDF已导出，中文完美显示', 'success');
-            return;
-        } catch (e) {
-            console.warn('截图模式失败，降级到文字模式:', e);
-        }
+            PDFCanvas.writeSectionHeader(s, '二、历年指标数据明细', '#3B82F6', '#EFF6FF', '#1E40AF');
+            const headers = ['指标名称', '单位', '正常范围', ...years.map(y => y + '年')];
+            const totalColW = 515;
+            const fixed = [100, 45, 100];
+            const yearColW = Math.floor((totalColW - fixed.reduce((a, b) => a + b, 0)) / Math.max(years.length, 1));
+            const colWidths = [...fixed, ...Array(Math.max(years.length, 1)).fill(yearColW)];
+            const rows = INDICATOR_RULES.map(r => {
+                const row = [r.name, r.unit, `${r.minNormal}~${r.maxNormal}`];
+                years.forEach(yr => {
+                    const rep = State.reports.find(x => x.year === yr);
+                    const v = rep?.indicators[r.key];
+                    row.push((v == null || isNaN(v)) ? '-' : String(v));
+                });
+                return row;
+            });
+            const highlightMap = {};
+            INDICATOR_RULES.forEach((r, ri) => {
+                years.forEach((yr, yi) => {
+                    const rep = State.reports.find(x => x.year === yr);
+                    const v = rep?.indicators[r.key];
+                    if (v != null && !isNaN(v)) {
+                        const st = ReportModule.getIndicatorStatus(v, r);
+                        if (st.cls === 'abnormal') {
+                            highlightMap[`${ri}_${yi + 3}`] = v > r.maxNormal ? '#FEE2E2' : '#DBEAFE';
+                        }
+                    }
+                });
+            });
+            PDFCanvas.writeTable(s, headers, rows, { colWidths, rowH: 22, highlightMap });
 
-        this.exportReportPDFSimple();
+            if (State.reports.length >= 2) {
+                PDFCanvas.writeSectionHeader(s, '三、趋势分析与健康建议', '#8B5CF6', '#F5F3FF', '#5B21B6');
+
+                INDICATOR_RULES.forEach(r => {
+                    const trend = ReportModule.analyzeTrend(r.key);
+                    if (!trend) return;
+                    const sorted = State.reports.slice().sort((a, b) => a.year - b.year);
+                    const vals = sorted.map(rep => rep.indicators[r.key]).filter(v => v != null && !isNaN(v));
+                    if (vals.length < 2) return;
+                    const chg = vals[vals.length - 1] - vals[0];
+                    const pct = vals[0] ? (chg / vals[0] * 100).toFixed(1) : 0;
+                    const trendMap = { up: '📈 上升趋势', down: '📉 下降趋势', stable: '➡️ 保持稳定' };
+                    const trendColor = { up: '#DC2626', down: '#2563EB', stable: '#059669' };
+                    const arrow = chg > 0 ? '+' : '';
+                    s.y += 6;
+                    PDFCanvas.writeBadgeRow(s, [
+                        { text: r.name, color: '#EDE9FE', fg: '#5B21B6', bold: true },
+                        { text: trendMap[trend], color: trendColor[trend], fg: '#FFFFFF', bold: true },
+                        { text: `${sorted[0].year}年:${vals[0]}${r.unit} → ${sorted[sorted.length - 1].year}年:${vals[vals.length - 1]}${r.unit}`, color: '#F1F5F9', fg: '#475569' },
+                        { text: `变化 ${arrow}${pct}%`, color: chg === 0 ? '#F1F5F9' : (chg > 0 ? '#FEF2F2' : '#EFF6FF'), fg: chg === 0 ? '#64748B' : (chg > 0 ? '#991B1B' : '#1E40AF'), bold: true }
+                    ]);
+                    const adviceLines = [];
+                    if (trend === 'up' && vals[vals.length - 1] > r.maxNormal) {
+                        adviceLines.push(`${r.name}持续偏高并呈上升趋势，${r.highAdvice}`);
+                    } else if (trend === 'down' && vals[vals.length - 1] < r.minNormal) {
+                        adviceLines.push(`${r.name}持续偏低并呈下降趋势，${r.lowAdvice}`);
+                    } else if (trend === 'stable' && vals[vals.length - 1] >= r.minNormal && vals[vals.length - 1] <= r.maxNormal) {
+                        adviceLines.push(`${r.name}保持在正常范围内且稳定，继续保持。`);
+                    }
+                    if (adviceLines.length) {
+                        PDFCanvas.writeText(s, `健康建议：${adviceLines.join('；')}`, 11, '#713F12', false, 20);
+                    }
+                });
+            }
+
+            PDFCanvas.writeSectionHeader(s, '四、总体健康评估与生活建议', '#F59E0B', '#FFFBEB', '#92400E');
+            const advice = ReportModule.generateAdvice();
+            advice.forEach((a, i) => {
+                s.y += 4;
+                PDFCanvas.writeText(s, `${i + 1}. ${a.title}`, 12, '#B45309', true);
+                PDFCanvas.writeText(s, a.detail, 11, '#78350F', false, 18);
+                s.y += 2;
+            });
+
+            s.y += 10;
+            PDFCanvas.writeText(s, `※ 本报告由康源体检中心健康管理系统自动生成，仅供参考，不作为诊断依据。如有异常请及时就医。`, 10, '#94A3B8');
+
+            const filename = `体检报告对比_${years.join('-')}.pdf`;
+            await PDFCanvas.finalize(filename);
+            showToast('对比报告PDF已导出（纯文字中文版）', 'success');
+        } catch (e) {
+            console.error('对比报告PDF生成失败:', e);
+            showToast('PDF生成失败，请重试', 'error');
+        }
     },
 
     exportReportPDFSimple() {
-        const { jsPDF } = window.jspdf;
-        const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
-        const pageW = pdf.internal.pageSize.getWidth();
-        const pageH = pdf.internal.pageSize.getHeight();
-        let y = 20;
-
-        const years = State.reports.slice().sort((a, b) => a.year - b.year).map(r => r.year);
-        const latest = [...State.reports].sort((a, b) => b.year - a.year)[0];
-
-        const addTextLine = (text, x, yPos, options = {}) => {
-            const maxLen = options.maxLen || 60;
-            const lines = [];
-            let remaining = text;
-            while (remaining.length > 0) {
-                lines.push(remaining.substring(0, maxLen));
-                remaining = remaining.substring(maxLen);
-            }
-            lines.forEach((line, i) => {
-                pdf.text(line, x, yPos + i * (options.lineHeight || 5), options);
-            });
-            return lines.length * (options.lineHeight || 5);
-        };
-
-        pdf.setFillColor(248, 250, 249); pdf.rect(0, 0, pageW, pageH, 'F');
-        pdf.setTextColor(16, 185, 129); pdf.setFontSize(18); pdf.setFont('helvetica', 'bold');
-        pdf.text('Health Report Comparison', 105, y, { align: 'center' });
-        y += 8;
-        pdf.setTextColor(16, 185, 129); pdf.setFontSize(14);
-        pdf.text('Ti Jian Bao Gao Dui Bi', 105, y, { align: 'center' });
-        y += 10;
-        pdf.setFontSize(10); pdf.setTextColor(100); pdf.setFont('helvetica', 'normal');
-        pdf.text(`Kangyuan Health Center | Years: ${years.join('-')} | ${new Date().toLocaleDateString('zh-CN')}`, 105, y, { align: 'center' });
-        y += 12;
-
-        const abnormals = INDICATOR_RULES.filter(r => {
-            const v = latest.indicators[r.key];
-            return ReportModule.getIndicatorStatus(v, r).cls === 'abnormal';
-        });
-
-        pdf.setFillColor(254, 242, 242); pdf.roundedRect(14, y, pageW - 28, 8, 2, 2, 'F');
-        pdf.setFillColor(239, 68, 68); pdf.roundedRect(14, y, 4, 8, 2, 2, 'F');
-        pdf.setFontSize(11); pdf.setTextColor(153, 27, 27); pdf.setFont('helvetica', 'bold');
-        pdf.text(`Abnormal Indicators (${latest.year}) - ${abnormals.length} items`, 22, y + 5.5);
-        y += 14;
-        pdf.setFontSize(10);
-
-        if (abnormals.length === 0) {
-            pdf.setTextColor(16, 185, 129); pdf.setFont('helvetica', 'bold');
-            pdf.text('All indicators are normal, good health!', 14, y);
-            y += 10;
-        } else {
-            abnormals.forEach(r => {
-                const v = latest.indicators[r.key];
-                if (v == null || isNaN(v)) return;
-                const isHigh = v > r.maxNormal;
-                const dirTxt = isHigh ? 'HIGH' : 'LOW';
-                if (y > pageH - 40) { pdf.addPage(); y = 20; pdf.setFillColor(248, 250, 249); pdf.rect(0, 0, pageW, pageH, 'F'); }
-                pdf.setFillColor(254, 226, 226); pdf.roundedRect(14, y - 4, pageW - 28, 9, 2, 2, 'F');
-                pdf.setTextColor(239, 68, 68); pdf.setFont('helvetica', 'bold');
-                pdf.text(`* ${r.key} ${dirTxt}: ${v}${r.unit} (Normal: ${r.minNormal}~${r.maxNormal})`, 18, y + 2);
-                y += 8;
-                pdf.setTextColor(71, 85, 105); pdf.setFont('helvetica', 'normal');
-                const advice = isHigh ? 'Please review with doctor, control diet and exercise' : 'Please review with doctor, ensure adequate nutrition';
-                pdf.text(`  Advice: ${advice}`, 18, y + 2);
-                y += 8;
-                pdf.setTextColor(120, 120, 120); pdf.setFontSize(9);
-                addTextLine(`  建议: ${isHigh ? r.highAdvice : r.lowAdvice}`, 18, y + 2, { maxLen: 80, lineHeight: 4 });
-                pdf.setFontSize(10);
-                y += 12;
-            });
-        }
-
-        if (State.reports.length >= 3) {
-            y += 6;
-            if (y > pageH - 60) { pdf.addPage(); y = 20; pdf.setFillColor(248, 250, 249); pdf.rect(0, 0, pageW, pageH, 'F'); }
-            pdf.setFillColor(219, 234, 254); pdf.roundedRect(14, y, pageW - 28, 8, 2, 2, 'F');
-            pdf.setFillColor(59, 130, 246); pdf.roundedRect(14, y, 4, 8, 2, 2, 'F');
-            pdf.setTextColor(30, 58, 138); pdf.setFontSize(11); pdf.setFont('helvetica', 'bold');
-            pdf.text(`Trend Analysis (${years.length} years)`, 22, y + 5.5);
-            y += 14;
-            pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10);
-
-            INDICATOR_RULES.forEach(r => {
-                if (y > pageH - 20) { pdf.addPage(); y = 20; pdf.setFillColor(248, 250, 249); pdf.rect(0, 0, pageW, pageH, 'F'); }
-                const trend = ReportModule.analyzeTrend(r.key);
-                const sorted = State.reports.slice().sort((a, b) => a.year - b.year);
-                const vals = sorted.map(rep => rep.indicators[r.key]).filter(v => v != null && !isNaN(v));
-                if (vals.length < 2) return;
-                const map = { up: 'UP', down: 'DOWN', stable: 'STABLE' };
-                const colorMap = { up: [239, 68, 68], down: [59, 130, 246], stable: [16, 185, 129] };
-                const chg = vals[vals.length - 1] - vals[0];
-                const pct = vals[0] ? (chg / vals[0] * 100).toFixed(1) : 0;
-                pdf.setTextColor(...colorMap[trend || 'stable']); pdf.setFont('helvetica', 'bold');
-                pdf.text(`${map[trend || 'stable']}  ${r.key} (${r.name.substring(0, 8)})`, 18, y);
-                pdf.setTextColor(100); pdf.setFont('helvetica', 'normal');
-                pdf.text(`${sorted[0].year}: ${vals[0]}${r.unit} -> ${sorted[sorted.length - 1].year}: ${vals[vals.length - 1]}${r.unit} (${chg > 0 ? '+' : ''}${pct}%)`, 80, y);
-                y += 7;
-            });
-        }
-
-        y += 6;
-        if (y > pageH - 50) { pdf.addPage(); y = 20; pdf.setFillColor(248, 250, 249); pdf.rect(0, 0, pageW, pageH, 'F'); }
-        pdf.setFillColor(254, 243, 199); pdf.roundedRect(14, y, pageW - 28, 8, 2, 2, 'F');
-        pdf.setFillColor(245, 158, 11); pdf.roundedRect(14, y, 4, 8, 2, 2, 'F');
-        pdf.setTextColor(146, 64, 14); pdf.setFontSize(11); pdf.setFont('helvetica', 'bold');
-        pdf.text(`Indicator Data Summary`, 22, y + 5.5);
-        y += 14;
-
-        pdf.setFillColor(241, 245, 249); pdf.roundedRect(14, y - 4, pageW - 28, 8, 2, 2, 'F');
-        pdf.setFontSize(10); pdf.setTextColor(15); pdf.setFont('helvetica', 'bold');
-        pdf.text('Indicator', 18, y + 1.5);
-        years.forEach((yr, i) => {
-            const xPos = 65 + i * ((pageW - 80) / Math.max(years.length, 1));
-            pdf.text(`${yr}`, xPos, y + 1.5);
-        });
-        pdf.text('Normal', pageW - 25, y + 1.5, { align: 'right' });
-        y += 12;
-
-        pdf.setFont('helvetica', 'normal');
-        INDICATOR_RULES.forEach((r, idx) => {
-            if (y > pageH - 20) { pdf.addPage(); y = 20; pdf.setFillColor(248, 250, 249); pdf.rect(0, 0, pageW, pageH, 'F'); }
-            if (idx % 2 === 1) { pdf.setFillColor(250, 250, 250); pdf.roundedRect(14, y - 5, pageW - 28, 8, 1, 1, 'F'); }
-            const latestV = latest.indicators[r.key];
-            const st = ReportModule.getIndicatorStatus(latestV, r);
-            pdf.setTextColor(st.cls === 'abnormal' ? 239 : 71, st.cls === 'abnormal' ? 68 : 85, st.cls === 'abnormal' ? 68 : 105);
-            pdf.setFont(st.cls === 'abnormal' ? 'helvetica' : 'helvetica', st.cls === 'abnormal' ? 'bold' : 'normal');
-            pdf.text(r.key, 18, y);
-            pdf.setFont('helvetica', 'normal');
-            years.forEach((yr, i) => {
-                const rep = State.reports.find(x => x.year === yr);
-                const v = rep?.indicators[r.key];
-                const xPos = 65 + i * ((pageW - 80) / Math.max(years.length, 1));
-                const txt = (v == null || isNaN(v)) ? '-' : String(v);
-                pdf.setTextColor((v == null || isNaN(v)) ? 180 : 15);
-                pdf.text(txt, xPos, y);
-            });
-            pdf.setTextColor(150, 150, 150);
-            pdf.text(`${r.minNormal}-${r.maxNormal}`, pageW - 25, y, { align: 'right' });
-            y += 7;
-        });
-
-        y += 6;
-        pdf.setFontSize(9); pdf.setTextColor(148, 163, 184);
-        pdf.text(`* This report is for reference only. Please consult a doctor for diagnosis.`, 14, pageH - 16);
-        pdf.text(`Generated: ${new Date().toLocaleString('zh-CN')} | Kangyuan Health Center`, 14, pageH - 10);
-
-        pdf.save(`体检报告对比_${years.join('-')}.pdf`);
-        showToast('对比PDF已导出(文字模式)', 'success');
+        this.exportReportPDF();
     },
 
     downloadBlob(content, mime, filename) {
@@ -1608,6 +2251,9 @@ function init() {
     State.load();
     PackageModule.init();
     ReportModule.init();
+    BudgetModule.init();
+    ConflictModal.init();
+    TrackerModal.init();
     setTimeout(() => showToast('已加载演示数据(2022-2024年报告)，可手动修改', 'info', 3600), 400);
 }
 

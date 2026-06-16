@@ -111,6 +111,42 @@
                         </div>
                     </div>
 
+                    <div class="card fade-in" style="--delay:0.18s" id="budget-card">
+                        <div class="card-header">
+                            <h2 class="card-title">
+                                <span class="title-icon">💰</span>
+                                预算智能推荐
+                            </h2>
+                            <span class="card-subtitle">输入预算上限，自动搭配最优组合</span>
+                        </div>
+                        <div class="card-body">
+                            <div class="budget-form">
+                                <div class="budget-input-row">
+                                    <div class="form-group">
+                                        <label for="budget-input">预算上限</label>
+                                        <div class="budget-input-wrap">
+                                            <span class="budget-prefix">¥</span>
+                                            <input type="number" id="budget-input" min="100" max="50000" placeholder="如: 2000">
+                                        </div>
+                                    </div>
+                                    <button class="btn btn-primary" id="budget-calc-btn">
+                                        <span>✨</span> 生成推荐方案
+                                    </button>
+                                </div>
+                                <div class="budget-result" id="budget-result" hidden>
+                                    <div class="budget-summary" id="budget-summary"></div>
+                                    <div class="budget-decisions" id="budget-decisions"></div>
+                                    <div class="budget-actions">
+                                        <button class="btn btn-secondary" id="budget-apply-btn">
+                                            <span>✅</span> 应用此方案
+                                        </button>
+                                        <button class="btn-text" id="budget-reset-btn">重置</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="card fade-in" style="--delay:0.2s">
                         <div class="card-header">
                             <h2 class="card-title">
@@ -320,6 +356,91 @@
     </footer>
 
     <div class="toast" id="toast"></div>
+
+    <div class="modal-backdrop" id="conflict-modal" hidden>
+        <div class="modal">
+            <div class="modal-header">
+                <h3>📋 报告年份冲突</h3>
+                <button class="modal-close" id="conflict-close">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="conflict-info">
+                    <p class="conflict-title">检测到 <strong id="conflict-year">2024</strong> 年报告已存在</p>
+                    <div class="conflict-compare">
+                        <div class="conflict-side">
+                            <p class="conflict-side-title">📂 现有报告</p>
+                            <div id="conflict-existing" class="conflict-list"></div>
+                        </div>
+                        <div class="conflict-arrow">→</div>
+                        <div class="conflict-side">
+                            <p class="conflict-side-title">📄 新识别报告</p>
+                            <div id="conflict-new" class="conflict-list"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="conflict-actions">
+                    <button class="btn btn-danger" id="conflict-overwrite">
+                        <span>🔄</span> 覆盖现有
+                    </button>
+                    <button class="btn btn-secondary" id="conflict-merge">
+                        <span>🔀</span> 合并数据
+                    </button>
+                    <button class="btn btn-primary" id="conflict-newyear">
+                        <span>➕</span> 另存为 <strong id="conflict-alt-year">2025</strong>
+                    </button>
+                </div>
+                <label class="apply-all">
+                    <input type="checkbox" id="conflict-apply-all"> <span>对后续所有冲突使用相同选择</span>
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-backdrop" id="tracker-modal" hidden>
+        <div class="modal tracker-modal">
+            <div class="modal-header">
+                <h3 id="tracker-title">📊 指标追踪</h3>
+                <button class="modal-close" id="tracker-close">×</button>
+            </div>
+            <div class="modal-body tracker-body">
+                <div class="tracker-overview" id="tracker-overview"></div>
+                <div class="tracker-chart-wrap">
+                    <canvas id="tracker-chart" height="180"></canvas>
+                </div>
+                <div class="tracker-stats">
+                    <div class="stat-card">
+                        <div class="stat-label">最高值</div>
+                        <div class="stat-value stat-high" id="tracker-max">—</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">最低值</div>
+                        <div class="stat-value stat-low" id="tracker-min">—</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">平均值</div>
+                        <div class="stat-value" id="tracker-avg">—</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">偏高次数</div>
+                        <div class="stat-value stat-danger" id="tracker-highcount">—</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">偏低次数</div>
+                        <div class="stat-value stat-warning" id="tracker-lowcount">—</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">趋势判断</div>
+                        <div class="stat-value" id="tracker-trend">—</div>
+                    </div>
+                </div>
+                <div class="tracker-table">
+                    <p class="tracker-subtitle">📋 历年数据明细</p>
+                    <table id="tracker-table"></table>
+                </div>
+                <div class="tracker-advice" id="tracker-advice"></div>
+            </div>
+        </div>
+    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
